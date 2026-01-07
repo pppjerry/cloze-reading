@@ -1,0 +1,213 @@
+:host {
+  all: initial;
+  display: block;
+  z-index: 2147483647;
+  position: fixed;
+  top: 20px;
+  right: 20px;
+}
+
+/* Reset for Shadow DOM */
+.cr-panel * {
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* =========================================
+   Floating Panel Styles
+   ========================================= */
+.cr-panel {
+  width: 320px;
+  max-height: 90vh;
+  background: #0f172a; /* Slate 900 */
+  color: #f1f5f9;
+  border-radius: 12px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: 14px;
+}
+
+.cr-header {
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cr-logo {
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.cr-close {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0;
+}
+.cr-close:hover { color: #fff; }
+
+.cr-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.cr-settings {
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.cr-status {
+  font-size: 13px;
+  color: #cbd5e1;
+  line-height: 1.4;
+}
+
+.cr-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cr-bar {
+  flex: 1;
+  height: 6px;
+  background: #334155;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.cr-bar-inner {
+  height: 100%;
+  background: #38bdf8;
+  transition: width 0.3s ease;
+}
+
+.cr-count {
+  font-size: 12px;
+  color: #94a3b8;
+  width: 40px;
+  text-align: right;
+}
+
+.cr-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cr-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cr-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cr-btn.primary {
+  background: #38bdf8;
+  color: #0f172a;
+}
+.cr-btn.primary:hover:not(:disabled) { background: #7dd3fc; }
+
+.cr-btn.success {
+  background: #4ade80;
+  color: #064e3b;
+}
+.cr-btn.success:hover:not(:disabled) { background: #86efac; }
+
+.cr-btn.warning {
+  background: #f87171;
+  color: #450a0a;
+}
+.cr-btn.warning:hover:not(:disabled) { background: #fca5a5; }
+
+/* =========================================
+   In-Content Styles (Injected to Page)
+   ========================================= */
+
+/* Dropdown Style */
+select.cr-select {
+  appearance: auto;
+  -webkit-appearance: menulist;
+  display: inline-block;
+  margin: 0 4px;
+  padding: 2px 6px;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  background-color: #eff6ff;
+  color: #1e3a8a;
+  font-size: 0.95em;
+  font-family: inherit;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  max-width: 150px;
+  text-overflow: ellipsis;
+}
+
+/* Correct Answer */
+.cr-cloze-wrapper.correct select.cr-select {
+  border-color: #22c55e !important;
+  background-color: #dcfce7 !important;
+  color: #15803d !important;
+}
+
+/* Wrong Answer */
+.cr-cloze-wrapper.wrong select.cr-select {
+  border-color: #ef4444 !important;
+  background-color: #fee2e2 !important;
+  color: #991b1b !important;
+  text-decoration: line-through;
+}
+
+/* Feedback Text */
+.cr-feedback {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 6px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 0.85em;
+  color: #334155;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  line-height: 1.4;
+  vertical-align: middle;
+}
+
+/* Processed Paragraph Highlight (Optional) */
+.cr-paragraph-processed {
+  /* position: relative; */
+  /* background: rgba(56, 189, 248, 0.05); */
+  /* border-left: 2px solid rgba(56, 189, 248, 0.3); */
+  /* padding-left: 8px; */
+}

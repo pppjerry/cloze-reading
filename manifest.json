@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "cloze-reading",
+  "version": "0.1.0",
+  "description": "把网页正文变成阅读理解型挖空题（Cloze），支持 Ollama、Google AI Studio、阿里云通义千问。",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://dashscope.aliyuncs.com/*"
+  ],
+  "action": {
+    "default_title": "cloze-reading"
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/ui.css", "src/vendor/readability/Readability.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
+
+
