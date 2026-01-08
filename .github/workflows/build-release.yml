@@ -8,6 +8,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 需要写入权限来创建 Release
+      actions: read   # 读取权限（默认）
     
     steps:
       - name: Checkout code
@@ -63,6 +66,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: dist/cloze-reading-${{ steps.tag.outputs.name }}.zip
+          tag_name: ${{ steps.tag.outputs.name }}
           name: Release ${{ steps.tag.outputs.name }}
           body: |
             ## Cloze Reading Extension ${{ steps.tag.outputs.name }}
@@ -80,6 +84,5 @@ jobs:
             查看 [README.md](README.md) 了解详细功能和使用说明。
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          generate_release_notes: false
 
