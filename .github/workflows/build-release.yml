@@ -1,0 +1,69 @@
+name: Build and Release Extension
+
+on:
+  push:
+    tags:
+      - 'v*'  # 匹配所有以 v 开头的 tag，如 v1.0.0, v0.1.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Get tag name
+        id: tag
+        run: echo "name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      
+      - name: Create extension package
+        run: |
+          # 创建临时打包目录
+          mkdir -p dist/package
+          
+          # 复制插件文件到打包目录
+          cp -r cloze-reading/src dist/package/
+          cp cloze-reading/manifest.json dist/package/
+          cp cloze-reading/README.md dist/package/
+          
+          # 进入打包目录创建 zip
+          cd dist/package
+          zip -r "../cloze-reading-${{ steps.tag.outputs.name }}.zip" . \
+            -x "*.DS_Store" \
+            -x "*/.git/*"
+          
+          # 返回根目录
+          cd ../..
+      
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloze-reading-${{ steps.tag.outputs.name }}
+          path: dist/cloze-reading-${{ steps.tag.outputs.name }}.zip
+          retention-days: 30
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/cloze-reading-${{ steps.tag.outputs.name }}.zip
+          name: Release ${{ steps.tag.outputs.name }}
+          body: |
+            ## Cloze Reading Extension ${{ steps.tag.outputs.name }}
+            
+            ### 安装说明
+            
+            1. 下载 `cloze-reading-${{ steps.tag.outputs.name }}.zip` 文件
+            2. 解压 zip 文件
+            3. 在浏览器中打开扩展管理页面（Chrome: `chrome://extensions/`，Edge: `edge://extensions/`）
+            4. 开启"开发者模式"
+            5. 点击"加载已解压的扩展程序"，选择解压后的文件夹
+            
+            ### 变更日志
+            
+            查看 [README.md](README.md) 了解详细功能和使用说明。
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
