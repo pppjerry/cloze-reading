@@ -138,12 +138,14 @@ async function handleGenerateCloze({ paragraph }, tabId, sendResponse) {
   const provider = stored.apiProvider || stored.provider || 'ollama';
   
   const { id, text } = paragraph;
-  const prompt = buildPrompt(text);
+  const systemPrompt = buildSystemPrompt();
+  const userPrompt = buildUserPrompt(text);
   const wordCount = countWords(text);
 
   logToConsole(tabId, 'log', `[生成] 段落 ${id}，词数: ${wordCount}，Provider: ${provider}`);
   logToConsole(tabId, 'log', `[LLM 输入] 段落 ${id}:`, text);
-  logToConsole(tabId, 'log', `[Prompt] 段落 ${id}:`, prompt);
+  logToConsole(tabId, 'log', `[System Prompt] 段落 ${id}:`, systemPrompt);
+  logToConsole(tabId, 'log', `[User Prompt] 段落 ${id}:`, userPrompt);
 
   try {
     let rawContent = "";
@@ -151,11 +153,11 @@ async function handleGenerateCloze({ paragraph }, tabId, sendResponse) {
     logToConsole(tabId, 'log', `[API 调用] 段落 ${id}，开始调用 ${provider}...`);
     
     if (provider === 'dashscope') {
-      rawContent = await callDashScope(stored, prompt);
+      rawContent = await callDashScope(stored, systemPrompt, userPrompt);
     } else if (provider === 'google') {
-      rawContent = await callGoogle(stored, prompt);
+      rawContent = await callGoogle(stored, systemPrompt, userPrompt);
     } else {
-      rawContent = await callOllama(stored, prompt);
+      rawContent = await callOllama(stored, systemPrompt, userPrompt);
     }
     
     logToConsole(tabId, 'log', `[LLM 输出] 段落 ${id}:`, rawContent);
@@ -182,16 +184,21 @@ async function handleGenerateCloze({ paragraph }, tabId, sendResponse) {
 }
 
 // 调用 Ollama
-async function callOllama(settings, prompt) {
+async function callOllama(settings, systemPrompt, userPrompt) {
   const baseUrl = settings.ollamaBaseUrl || DEFAULT_SETTINGS.ollamaBaseUrl;
   const model = settings.ollamaModel || DEFAULT_SETTINGS.ollamaModel;
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ];
 
   const response = await fetch(`${baseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: model,
-      messages: [{ role: 'user', content: prompt }],
+      messages: messages,
       stream: false,
       options: { temperature: 0.2, num_ctx: 4096 }
     })
@@ -207,10 +214,15 @@ async function callOllama(settings, prompt) {
   }
 
 // 调用 DashScope
-async function callDashScope(settings, prompt) {
+async function callDashScope(settings, systemPrompt, userPrompt) {
   const apiKey = settings.dashscopeApiKey;
   const model = settings.dashscopeModel || DEFAULT_SETTINGS.dashscopeModel;
   const url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ];
 
   const response = await fetch(url, {
     method: 'POST',
@@ -220,7 +232,7 @@ async function callDashScope(settings, prompt) {
     },
     body: JSON.stringify({
       model: model,
-      messages: [{ role: 'user', content: prompt }],
+      messages: messages,
       temperature: 0.2
     })
   });
@@ -235,22 +247,30 @@ async function callDashScope(settings, prompt) {
 }
 
 // 调用 Google AI Studio (Gemini)
-async function callGoogle(settings, prompt) {
+async function callGoogle(settings, systemPrompt, userPrompt) {
   const apiKey = settings.googleApiKey;
   const model = settings.googleModel || DEFAULT_SETTINGS.googleModel;
   
   // Gemini API URL format: https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=YOUR_API_KEY
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
+  // Gemini 使用 systemInstruction 作为系统提示词
+  const requestBody = {
+    contents: [{ 
+      parts: [{ text: userPrompt }] 
+    }],
+    systemInstruction: {
+      parts: [{ text: systemPrompt }]
+    },
+    generationConfig: {
+      temperature: 0.2
+    }
+  };
+
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.2
-      }
-    })
+    body: JSON.stringify(requestBody)
   });
 
   if (!response.ok) {
@@ -263,29 +283,26 @@ async function callGoogle(settings, prompt) {
   return data.candidates[0].content.parts[0].text;
 }
 
-// 5. Prompt 构建
-function buildPrompt(text) {
+// 5. Prompt 构建 - 分离系统提示词和用户输入
+function buildSystemPrompt() {
   const parts = [
-    '你是一个专业的阅读理解出题助手。请针对下文制作"完形填空"（Cloze Test）。',
-    '',
-    '**输入文本**:',
-    '"' + text + '"',
+    '你是一个专业的阅读理解出题老师。请针对用户提供的文本制作"完形填空"。',
     '',
     '**要求**:',
-    '1. **只挖名词、命名实体、概念性词汇、专业术语/技术词汇**：',
+    '1. **用户需要理解上下文才可以得出答案**：',
+    '2. **关注名词、命名实体、概念性词汇、专业术语/技术词汇**：',
     '   - 优先选择：',
     '     * 专有名词（人名、地名、机构名）',
     '     * 专业术语/技术词汇（领域特定概念，如 API、协议、算法、架构、框架、模型等）',
     '     * 核心概念、重要名词',
-    '   - 不要挖：动词、形容词、副词、连词、虚词。',
-    '2. **每个段落最多挖 2 个空（严格限制）**：',
-    '   - 如果段落太短（少于20个词）或没有合适的名词/概念，返回空列表 []。',
-    '   - **重要：如果段落在100个词以内（包括100个词），必须只挖1个空，绝对不能挖2个空！**',
-    '   - 只有超过100个词的段落才能挖2个空。',
+    '   - 不要选择：动词、形容词、副词、连词、虚词。',
+    '3. **每个段落最多挖 2 个空（严格限制）**：',
+    '   - 如果少于20字或没有合适的目标词，返回空列表 []。',
+    '   - 每100字以内，只允许1个空，绝对不能挖2个空！',
     '   - 挖空词必须是原文中存在的词（精确匹配，不要带标点）。',
-    '3. 为每个挖空点提供：',
-    '   - target: 原文中被挖掉的词（必须精确匹配原文，不要带标点）。不要使用占位符如 ___、___、空白等。',
-    '   - options: 4个选项（包含正确答案）。所有选项都必须是实际有意义的词，不要使用占位符如 ___、___、空白等。干扰项要有迷惑性（词性一致，语义相关但不正确）。',
+    '4. 为每个挖空点提供：',
+    '   - target: 原文中被挖掉的词（必须精确匹配原文，不要带标点）。',
+    '   - options: 4个选项（包含正确答案）。所有选项都必须是实际有意义的词。干扰项要有迷惑性（词性一致，语义相关但不正确）。',
     '   - answer: 正确选项（必须是 options 中的一个）。',
     '   - analysis: 简短解析（中文，20字以内）。',
     '',
@@ -306,6 +323,10 @@ function buildPrompt(text) {
     '}'
   ];
   return parts.join('\n');
+}
+
+function buildUserPrompt(text) {
+  return text;
 }
 
 // 6. 鲁棒的 JSON 解析器
