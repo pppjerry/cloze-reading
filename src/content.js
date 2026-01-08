@@ -120,33 +120,186 @@ if (!window.ClozeReadingApp) {
     },
 
     async loadReadability() {
+      // 如果已经加载，直接返回
+      if (typeof window.Readability !== 'undefined' && typeof window.Readability === 'function') {
+        console.log('✓ Readability 已加载（通过 executeScript 注入）');
+        return;
+      }
+      
+      // 检查全局 Readability（可能通过 executeScript 注入了但还没绑定到 window）
+      if (typeof Readability !== 'undefined' && typeof Readability === 'function') {
+        console.log('发现全局 Readability，绑定到 window');
+        window.Readability = Readability;
+        return;
+      }
+
+      // 使用 script 标签方式加载（避免 CSP 限制）
       return new Promise((resolve, reject) => {
-        // 如果已经加载，直接返回
-        if (typeof window.Readability !== 'undefined' && typeof window.Readability === 'function') {
-          resolve();
+        // 检查是否已经有脚本标签在加载
+        const existingScript = document.querySelector('script[data-readability]');
+        if (existingScript) {
+          console.log('Readability 脚本正在加载中，等待...');
+          let attempts = 0;
+          const maxAttempts = 60; // 增加到 3 秒
+          const checkReadability = () => {
+            attempts++;
+            if (typeof window.Readability === 'function') {
+              console.log('✓ Readability 加载成功（已有脚本）');
+              resolve();
+            } else if (attempts >= maxAttempts) {
+              reject(new Error('Readability 加载超时：window.Readability 不是函数。请刷新页面后重试。'));
+            } else {
+              setTimeout(checkReadability, 50);
+            }
+          };
+          setTimeout(checkReadability, 50);
           return;
         }
 
+        const scriptUrl = chrome.runtime.getURL('src/vendor/readability/Readability.js');
+        console.log('正在通过 script 标签加载 Readability.js:', scriptUrl);
+        
+        // 验证 URL 是否可访问
+        fetch(scriptUrl, { method: 'HEAD' }).then(response => {
+          if (!response.ok) {
+            throw new Error(`Readability.js 文件不存在或无法访问: HTTP ${response.status}`);
+          }
+          console.log('✓ Readability.js 文件可访问');
+        }).catch(err => {
+          console.warn('无法验证 Readability.js 文件，继续尝试加载:', err);
+        });
+
         const script = document.createElement('script');
-        script.src = chrome.runtime.getURL('src/vendor/readability/Readability.js');
+        script.src = scriptUrl;
+        script.setAttribute('data-readability', 'true');
+        script.setAttribute('type', 'text/javascript');
+        script.setAttribute('crossorigin', 'anonymous');
+        
+        // 监听脚本执行错误（通过全局错误处理）
+        const originalOnerror = window.onerror;
+        let scriptError = null;
+        window.onerror = (message, source, lineno, colno, error) => {
+          if (source && source.includes('Readability.js')) {
+            scriptError = { message, source, lineno, colno, error };
+            console.error('Readability.js 执行错误:', scriptError);
+            return true; // 阻止默认错误处理
+          }
+          if (originalOnerror) {
+            return originalOnerror(message, source, lineno, colno, error);
+          }
+          return false;
+        };
+        
+        // 增加超时处理
+        const timeoutId = setTimeout(() => {
+          window.onerror = originalOnerror; // 恢复原始错误处理
+          script.remove();
+          reject(new Error('Readability.js 加载超时（超过 5 秒），请检查网络连接或刷新页面'));
+        }, 5000);
         
         script.onload = () => {
-          // 延迟一下，确保脚本完全执行
-          setTimeout(() => {
-            if (typeof window.Readability === 'function') {
-              console.log('✓ Readability 加载成功');
-              resolve();
-            } else {
-              reject(new Error('Readability 加载失败：window.Readability 不是函数'));
+          console.log('Readability.js 脚本标签 onload 事件触发');
+          clearTimeout(timeoutId);
+          
+          // 恢复原始错误处理
+          window.onerror = originalOnerror;
+          
+          // 检查是否有执行错误
+          if (scriptError) {
+            reject(new Error(`Readability.js 执行时出错: ${scriptError.message} (行 ${scriptError.lineno})`));
+            return;
+          }
+          
+          // 尝试手动触发 Readability 的初始化
+          // 如果脚本执行了但 window.Readability 没设置，手动设置
+          try {
+            // 检查脚本是否真的执行了（通过检查是否有 Readability 构造函数）
+            if (typeof Readability !== 'undefined' && typeof Readability === 'function') {
+              console.log('发现全局 Readability 函数，手动绑定到 window');
+              window.Readability = Readability;
             }
-          }, 50);
+          } catch (e) {
+            console.warn('检查全局 Readability 时出错:', e);
+          }
+          
+          // 立即检查一次
+          if (typeof window.Readability === 'function') {
+            console.log('✓ Readability 加载成功（立即检查）');
+            resolve();
+            return;
+          }
+          
+          // 使用轮询方式检查，最多等待 3 秒
+          let attempts = 0;
+          const maxAttempts = 60; // 60 * 50ms = 3秒
+          
+          const checkReadability = () => {
+            attempts++;
+            
+            // 每次检查时都尝试手动绑定（以防脚本延迟执行）
+            try {
+              if (typeof Readability !== 'undefined' && typeof Readability === 'function' && typeof window.Readability !== 'function') {
+                console.log('尝试手动绑定 Readability 到 window');
+                window.Readability = Readability;
+              }
+            } catch (e) {
+              // 忽略错误，继续检查
+            }
+            
+            // 检查 window.Readability
+            if (typeof window.Readability === 'function') {
+              console.log('✓ Readability 加载成功（通过 script 标签，轮询检查）');
+              resolve();
+              return;
+            }
+            
+            if (attempts >= maxAttempts) {
+              // 最后一次尝试：直接检查脚本内容
+              console.error('Readability 加载失败详情:', {
+                windowReadability: typeof window.Readability,
+                windowReadabilityValue: window.Readability,
+                globalReadability: typeof Readability,
+                globalReadabilityValue: Readability,
+                scriptUrl: scriptUrl,
+                scriptReadyState: script.readyState,
+                scriptSrc: script.src,
+                scriptInDOM: document.contains(script),
+                windowType: typeof window,
+                hasWindow: !!window
+              });
+              
+              // 最后尝试：如果 Readability 存在但类型不对，尝试修复
+              if (typeof Readability !== 'undefined') {
+                console.warn('Readability 存在但类型不是 function:', typeof Readability);
+              }
+              
+              reject(new Error('Readability 加载失败：window.Readability 不是函数。脚本可能未正确执行。请检查浏览器控制台是否有 JavaScript 错误，或刷新页面后重试。'));
+              return;
+            }
+            
+            setTimeout(checkReadability, 50);
+          };
+          
+          // 延迟一下再开始检查，给脚本执行时间
+          setTimeout(checkReadability, 100);
         };
         
         script.onerror = (error) => {
-          reject(new Error('Readability.js 文件加载失败: ' + error));
+          clearTimeout(timeoutId);
+          window.onerror = originalOnerror; // 恢复原始错误处理
+          console.error('Readability.js 脚本标签加载错误:', error);
+          console.error('错误详情:', {
+            scriptSrc: script.src,
+            scriptUrl: scriptUrl,
+            error: error,
+            scriptElement: script
+          });
+          reject(new Error('Readability.js 文件加载失败，请检查扩展文件是否完整。URL: ' + scriptUrl));
         };
         
-        document.head.appendChild(script);
+        // 添加到 head
+        (document.head || document.documentElement).appendChild(script);
+        console.log('Readability.js script 标签已添加到 DOM');
       });
     },
 
@@ -284,7 +437,10 @@ if (!window.ClozeReadingApp) {
 
     handleSubmit() {
       const panel = document.getElementById('cr-floating-panel');
-      if (!panel) return;
+      if (!panel || !panel.shadowRoot) {
+        console.error('浮动面板不存在，无法提交答案');
+        return;
+      }
       const shadow = panel.shadowRoot;
 
       let correctCount = 0;
@@ -323,17 +479,27 @@ if (!window.ClozeReadingApp) {
 
     updateStatus(text, progress = null) {
       const panel = document.getElementById('cr-floating-panel');
-      if (!panel) return;
+      if (!panel || !panel.shadowRoot) {
+        // 如果面板不存在，只输出到控制台，不抛出错误
+        console.log('[状态更新]', text);
+        return;
+      }
       const shadow = panel.shadowRoot;
       
-      shadow.querySelector('.cr-status').textContent = text;
+      const statusElement = shadow.querySelector('.cr-status');
+      if (statusElement) {
+        statusElement.textContent = text;
+      }
       
       if (progress) {
         const { current, total } = progress;
         const pct = total === 0 ? 0 : Math.round((current / total) * 100);
-        shadow.querySelector('.cr-progress').style.display = 'flex';
-        shadow.querySelector('.cr-bar-inner').style.width = `${pct}%`;
-        shadow.querySelector('.cr-count').textContent = `${current}/${total}`;
+        const progressElement = shadow.querySelector('.cr-progress');
+        const barInner = shadow.querySelector('.cr-bar-inner');
+        const countElement = shadow.querySelector('.cr-count');
+        if (progressElement) progressElement.style.display = 'flex';
+        if (barInner) barInner.style.width = `${pct}%`;
+        if (countElement) countElement.textContent = `${current}/${total}`;
       }
     },
 
@@ -365,148 +531,90 @@ if (!window.ClozeReadingApp) {
         return true;
       }
 
-      // 使用 Readability 算法提取正文
+      // 使用 Readability 算法提取正文（完全依赖，无兜底策略）
       let readabilityParagraphs = [];
       
-      try {
-        if (typeof window.Readability === 'undefined' || typeof window.Readability !== 'function') {
-          await this.loadReadability();
-        }
-        
-        if (typeof window.Readability === 'function') {
-          const reader = new window.Readability(document, {
-            debug: false,
-            maxElemsToParse: 0,
-            nbTopCandidates: 5,
-            charThreshold: 500
-          });
-          
-          const article = reader.parse();
-          if (article && article.content) {
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = article.content;
-            readabilityParagraphs = Array.from(tempDiv.querySelectorAll('p'));
-            console.log(`[Readability] 提取到 ${readabilityParagraphs.length} 个段落`);
-            console.log(`[Readability] 文章标题: ${article.title || '无'}`);
-            console.log(`[Readability] 文章长度: ${article.length || 0} 字符`);
-          } else {
-            console.warn('[Readability] 未提取到内容');
-          }
-        }
-      } catch (err) {
-        console.warn('Readability 提取失败，使用兜底策略:', err);
+      // 确保 Readability 已加载
+      if (typeof window.Readability === 'undefined' || typeof window.Readability !== 'function') {
+        await this.loadReadability();
+      }
+      
+      if (typeof window.Readability !== 'function') {
+        throw new Error('Readability 加载失败，无法识别正文内容');
+      }
+      
+      // 创建一个新的 document 来执行 Readability，避免修改原始页面
+      // 使用 document.implementation.createHTMLDocument 创建独立的 document
+      const clonedDoc = document.implementation.createHTMLDocument('Cloned Document');
+      clonedDoc.documentElement.innerHTML = document.documentElement.innerHTML;
+      
+      // 复制 body 内容
+      if (document.body && clonedDoc.body) {
+        clonedDoc.body.innerHTML = document.body.innerHTML;
+      }
+      
+      // 使用克隆的 document 来执行 Readability，这样不会修改原始页面
+      const reader = new window.Readability(clonedDoc, {
+        debug: false,
+        maxElemsToParse: 0,
+        nbTopCandidates: 5,
+        charThreshold: 500
+      });
+      
+      const article = reader.parse();
+      if (!article || !article.content) {
+        throw new Error('Readability 无法识别正文内容，请确认当前页面包含可识别的文章内容');
+      }
+      
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = article.content;
+      readabilityParagraphs = Array.from(tempDiv.querySelectorAll('p'));
+      console.log(`[Readability] 提取到 ${readabilityParagraphs.length} 个段落`);
+      console.log(`[Readability] 文章标题: ${article.title || '无'}`);
+      console.log(`[Readability] 文章长度: ${article.length || 0} 字符`);
+      
+      if (readabilityParagraphs.length === 0) {
+        throw new Error('Readability 未提取到任何段落，无法生成题目');
       }
 
       // 通过 Readability 结果，在原始 DOM 中找到对应段落
-      if (readabilityParagraphs.length > 0) {
-        console.log(`[正文提取] 开始匹配 Readability 提取的 ${readabilityParagraphs.length} 个段落到原始 DOM`);
-        const allOriginalPTags = document.querySelectorAll('p');
-        let matchedCount = 0;
+      console.log(`[正文提取] 开始匹配 Readability 提取的 ${readabilityParagraphs.length} 个段落到原始 DOM`);
+      const allOriginalPTags = document.querySelectorAll('p');
+      let matchedCount = 0;
+      
+      readabilityParagraphs.forEach((readabilityP, index) => {
+        const text = readabilityP.innerText.trim();
+        if (text.length < 10 || !/[，。！？]/.test(text)) return;
         
-        readabilityParagraphs.forEach((readabilityP, index) => {
-          const text = readabilityP.innerText.trim();
-          if (text.length < 10 || !/[，。！？]/.test(text)) return;
+        const wordCount = countWords(text);
+        if (wordCount < 15) return;
+        
+        // 在原始 DOM 中查找匹配的段落
+        for (const originalP of allOriginalPTags) {
+          if (processedElements.has(originalP)) continue;
+          if (!shouldProcessElement(originalP)) continue;
           
-          const wordCount = countWords(text);
-          if (wordCount < 15) return;
-          
-          // 在原始 DOM 中查找匹配的段落
-          for (const originalP of allOriginalPTags) {
-            if (processedElements.has(originalP)) continue;
-            if (!shouldProcessElement(originalP)) continue;
+          const originalText = originalP.innerText.trim();
+          // 简单匹配：文本相同或包含关系
+          if (originalText === text || originalText.includes(text) || text.includes(originalText)) {
+            const id = `cr-p-${Date.now()}-${idCounter++}`;
+            originalP.setAttribute('data-cr-id', id);
+            processedElements.add(originalP);
             
-            const originalText = originalP.innerText.trim();
-            // 简单匹配：文本相同或包含关系
-            if (originalText === text || originalText.includes(text) || text.includes(originalText)) {
-              const id = `cr-p-${Date.now()}-${idCounter++}`;
-              originalP.setAttribute('data-cr-id', id);
-              processedElements.add(originalP);
-              
-              paragraphs.push({
-                id, element: originalP, originalHTML: originalP.innerHTML, text: originalText, status: 'pending'
-              });
-              matchedCount++;
-              console.log(`[正文提取] 段落 ${index + 1}/${readabilityParagraphs.length} 匹配成功:`, originalText.substring(0, 50) + '...');
-              break;
-            }
-          }
-        });
-        
-        console.log(`[正文提取] Readability 匹配完成: ${matchedCount}/${readabilityParagraphs.length} 个段落成功匹配`);
-      }
-
-      // 兜底策略：如果 Readability 没有找到足够段落，使用固定选择器
-      if (paragraphs.length === 0) {
-        console.log('[正文提取] Readability 未找到段落，使用兜底策略');
-        let mainContentArea = null;
-        const articleSelectors = [
-          'article', '[role="article"]', '.article', '.content', '.post-content', '.entry-content', 'main', '[role="main"]'
-        ];
-        
-        for (const selector of articleSelectors) {
-          const found = document.querySelector(selector);
-          if (found && found.offsetParent !== null) {
-            mainContentArea = found;
-            console.log(`[正文提取] 找到主内容区域: ${selector}`);
+            paragraphs.push({
+              id, element: originalP, originalHTML: originalP.innerHTML, text: originalText, status: 'pending'
+            });
+            matchedCount++;
+            console.log(`[正文提取] 段落 ${index + 1}/${readabilityParagraphs.length} 匹配成功:`, originalText.substring(0, 50) + '...');
             break;
           }
         }
-
-        const pTags = mainContentArea ? mainContentArea.querySelectorAll('p') : document.querySelectorAll('p');
-        console.log(`[正文提取] 找到 ${pTags.length} 个 <p> 标签`);
-        
-        pTags.forEach(el => {
-          if (!shouldProcessElement(el)) return;
-          if (processedElements.has(el)) return;
-          if (mainContentArea && !mainContentArea.contains(el)) return;
-          
-          const text = el.innerText.trim();
-          if (text.length < 10) return;
-          if (!/[，。！？]/.test(text)) return;
-          
-          const wordCount = countWords(text);
-          if (wordCount < 15) return;
-
-          const id = `cr-p-${Date.now()}-${idCounter++}`;
-          el.setAttribute('data-cr-id', id);
-          processedElements.add(el);
-          
-          paragraphs.push({
-            id, element: el, originalHTML: el.innerHTML, text: text, status: 'pending'
-          });
-          console.log(`[正文提取] 段落 ${paragraphs.length}:`, text.substring(0, 50) + '...');
-        });
-        
-        console.log(`[正文提取] 兜底策略完成: 找到 ${paragraphs.length} 个有效段落`);
-      }
-
-      // 补充处理：处理其他标签（如果前面没有找到足够段落）
+      });
+      
+      console.log(`[正文提取] Readability 匹配完成: ${matchedCount}/${readabilityParagraphs.length} 个段落成功匹配`);
+      
       if (paragraphs.length === 0) {
-        console.log('[正文提取] 使用补充策略：处理其他标签');
-        const otherTags = document.querySelectorAll('div, li, blockquote');
-        console.log(`[正文提取] 找到 ${otherTags.length} 个其他标签`);
-        
-        otherTags.forEach((el, index) => {
-          if (!shouldProcessElement(el) || processedElements.has(el)) return;
-          if (Array.from(el.querySelectorAll('p')).some(p => processedElements.has(p))) return;
-          
-          const text = el.innerText.trim();
-          if (text.length < 10 || !/[，。！？]/.test(text)) return;
-          
-          const wordCount = countWords(text);
-          if (wordCount < 15) return;
-
-          const id = `cr-p-${Date.now()}-${idCounter++}`;
-          el.setAttribute('data-cr-id', id);
-          processedElements.add(el);
-          
-          paragraphs.push({
-            id, element: el, originalHTML: el.innerHTML, text: text, status: 'pending'
-          });
-          console.log(`[正文提取] 补充段落 ${paragraphs.length}:`, text.substring(0, 50) + '...');
-        });
-        
-        console.log(`[正文提取] 补充策略完成: 找到 ${paragraphs.length} 个有效段落`);
+        throw new Error('Readability 提取的段落无法匹配到页面中的原始内容，无法生成题目');
       }
 
       console.log(`[正文提取] 最终结果: 共找到 ${paragraphs.length} 个段落`);
@@ -523,12 +631,16 @@ if (!window.ClozeReadingApp) {
       });
       
       const panel = document.getElementById('cr-floating-panel');
-      if (panel) {
+      if (panel && panel.shadowRoot) {
         const shadow = panel.shadowRoot;
-        shadow.getElementById('btn-generate').style.display = 'inline-block';
-        shadow.getElementById('btn-submit').style.display = 'none';
-        shadow.getElementById('btn-reset').style.display = 'none';
-        shadow.querySelector('.cr-progress').style.display = 'none';
+        const btnGenerate = shadow.getElementById('btn-generate');
+        const btnSubmit = shadow.getElementById('btn-submit');
+        const btnReset = shadow.getElementById('btn-reset');
+        const progressElement = shadow.querySelector('.cr-progress');
+        if (btnGenerate) btnGenerate.style.display = 'inline-block';
+        if (btnSubmit) btnSubmit.style.display = 'none';
+        if (btnReset) btnReset.style.display = 'none';
+        if (progressElement) progressElement.style.display = 'none';
         
         let config;
         try {
@@ -544,7 +656,19 @@ if (!window.ClozeReadingApp) {
     },
 
     async startGeneration() {
-      const panel = document.getElementById('cr-floating-panel');
+      // 确保面板存在
+      let panel = document.getElementById('cr-floating-panel');
+      if (!panel) {
+        console.log('浮动面板不存在，正在创建...');
+        this.createFloatingPanel();
+        panel = document.getElementById('cr-floating-panel');
+      }
+      
+      if (!panel || !panel.shadowRoot) {
+        console.error('浮动面板创建失败，无法开始生成');
+        this.updateStatus('错误：浮动面板未初始化，请刷新页面后重试');
+        return;
+      }
       const shadow = panel.shadowRoot;
       
       let config;
@@ -585,12 +709,18 @@ if (!window.ClozeReadingApp) {
     }
 
       this.updateStatus('正在解析网页...');
-      this.state.paragraphs = await this.parseDocument();
+      try {
+        this.state.paragraphs = await this.parseDocument();
+      } catch (error) {
+        this.updateStatus(`正文识别失败: ${error.message}`);
+        console.error('[正文提取错误]', error);
+        return;
+      }
       
       if (this.state.paragraphs.length === 0) {
         this.updateStatus('未找到适合生成的正文段落');
-      return;
-    }
+        return;
+      }
 
       this.state.stats = { total: this.state.paragraphs.length, done: 0, success: 0 };
       shadow.getElementById('btn-generate').style.display = 'none';
@@ -599,7 +729,12 @@ if (!window.ClozeReadingApp) {
     },
 
     async processQueue() {
-      const shadow = document.getElementById('cr-floating-panel').shadowRoot;
+      const panel = document.getElementById('cr-floating-panel');
+      if (!panel || !panel.shadowRoot) {
+        console.error('浮动面板不存在，无法处理队列');
+        return;
+      }
+      const shadow = panel.shadowRoot;
       let config;
       try {
         config = await safeStorageGet(['apiProvider']);
@@ -642,8 +777,11 @@ if (!window.ClozeReadingApp) {
         total: this.state.stats.total
       });
       
-      shadow.getElementById('btn-submit').style.display = 'inline-block';
-      shadow.getElementById('btn-submit').disabled = false;
+      const btnSubmit = shadow.getElementById('btn-submit');
+      if (btnSubmit) {
+        btnSubmit.style.display = 'inline-block';
+        btnSubmit.disabled = false;
+      }
     },
 
     applyClozeToParagraph(paragraphObj, clozes) {
@@ -652,7 +790,10 @@ if (!window.ClozeReadingApp) {
       // 去重：如果多个挖空有相同的 target，只保留第一个
       const seenTargets = new Set();
       const uniqueClozes = clozes.filter(cloze => {
-        if (seenTargets.has(cloze.target)) return false;
+        if (seenTargets.has(cloze.target)) {
+          console.warn(`[去重] 跳过重复的 target: ${cloze.target}`);
+          return false;
+        }
         seenTargets.add(cloze.target);
         return true;
       });
@@ -660,6 +801,9 @@ if (!window.ClozeReadingApp) {
       // 按长度从长到短排序，避免短词包含在长词中导致替换错误
       uniqueClozes.sort((a, b) => b.target.length - a.target.length);
 
+      // 记录已替换的位置，避免重复替换
+      const replacedRanges = [];
+      
       uniqueClozes.forEach((cloze, index) => {
         const optionsHtml = cloze.options.map(opt => `<option value="${opt}">${opt}</option>`).join('');
         
@@ -670,62 +814,112 @@ if (!window.ClozeReadingApp) {
         const selectHtml = `
           <span class="cr-cloze-wrapper">
             <select class="cr-select" id="${selectId}" data-answer="${safeAnswer}" data-analysis="${safeAnalysis}">
-              <option value="" disabled selected>___</option>
+              <option value="" disabled selected>&nbsp;</option>
               ${optionsHtml}
             </select>
           </span>
         `;
 
-        this.replaceTextInNode(el, cloze.target, selectHtml);
+        const replaced = this.replaceTextInNode(el, cloze.target, selectHtml, replacedRanges);
+        if (replaced) {
+          console.log(`[替换成功] ${cloze.target} -> 下拉框 ${index + 1}`);
+        } else {
+          console.warn(`[替换失败] 未找到或已替换: ${cloze.target}`);
+        }
       });
       
       el.classList.add('cr-paragraph-processed');
     },
 
-    replaceTextInNode(rootNode, targetText, replacementHtml) {
+    replaceTextInNode(rootNode, targetText, replacementHtml, replacedRanges = []) {
+      // 获取段落的完整文本内容，检查是否已经包含这个 target
+      const paragraphText = rootNode.textContent || '';
+      
+      // 检查这个 target 是否已经被替换过（通过检查段落中是否已经有对应的下拉框）
+      const existingSelects = rootNode.querySelectorAll('select.cr-select');
+      for (const select of existingSelects) {
+        const answer = select.dataset.answer;
+        if (answer === targetText) {
+          console.warn(`[跳过] ${targetText} 已经被替换过了`);
+          return false;
+        }
+      }
+      
       const walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_TEXT);
       let targetNode = null;
+      let targetIndex = -1;
+      let nodeStartOffset = 0; // 记录当前节点在整个段落中的起始位置
       
       while(walker.nextNode()) {
         const currentNode = walker.currentNode;
         
         // 跳过已经在 select 元素内的文本节点（避免重复替换）
         if (currentNode.parentElement && currentNode.parentElement.closest('select.cr-select')) {
+          nodeStartOffset += currentNode.nodeValue.length;
           continue;
         }
         
         // 跳过已经在 cr-cloze-wrapper 内的文本节点
         if (currentNode.parentElement && currentNode.parentElement.closest('.cr-cloze-wrapper')) {
+          nodeStartOffset += currentNode.nodeValue.length;
           continue;
         }
         
-        if (currentNode.nodeValue.includes(targetText)) {
-          targetNode = currentNode;
-          break; 
+        // 检查是否包含目标文本，并找到第一次出现的位置
+        const index = currentNode.nodeValue.indexOf(targetText);
+        if (index !== -1) {
+          const globalIndex = nodeStartOffset + index;
+          
+          // 检查这个位置是否与已替换的范围重叠
+          const overlaps = replacedRanges.some(range => {
+            return globalIndex < range.end && (globalIndex + targetText.length) > range.start;
+          });
+          
+          if (!overlaps) {
+            targetNode = currentNode;
+            targetIndex = index;
+            // 记录替换范围
+            replacedRanges.push({
+              start: globalIndex,
+              end: globalIndex + targetText.length,
+              target: targetText
+            });
+            break; // 只替换第一次出现
+          }
         }
+        
+        nodeStartOffset += currentNode.nodeValue.length;
       }
 
-      if (targetNode) {
-        const parts = targetNode.nodeValue.split(targetText);
+      if (targetNode && targetIndex !== -1) {
+        const nodeValue = targetNode.nodeValue;
+        const beforeText = nodeValue.substring(0, targetIndex);
+        const afterText = nodeValue.substring(targetIndex + targetText.length);
+        
         const fragment = document.createDocumentFragment();
         
-        const firstPart = parts.shift();
-        if (firstPart) {
-          fragment.appendChild(document.createTextNode(firstPart));
+        // 添加替换前的文本
+        if (beforeText) {
+          fragment.appendChild(document.createTextNode(beforeText));
         }
         
+        // 添加替换的 HTML（下拉框）
         const temp = document.createElement('span');
         temp.innerHTML = replacementHtml;
         while (temp.firstChild) {
           fragment.appendChild(temp.firstChild);
         }
         
-        if (parts.length > 0) {
-          fragment.appendChild(document.createTextNode(parts.join(targetText)));
+        // 添加替换后的文本
+        if (afterText) {
+          fragment.appendChild(document.createTextNode(afterText));
         }
         
         targetNode.parentNode.replaceChild(fragment, targetNode);
+        return true; // 返回 true 表示替换成功
       }
+      
+      return false; // 返回 false 表示未找到或已替换
     },
 
     async loadSettingsToPanel(shadow) {

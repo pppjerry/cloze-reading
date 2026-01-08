@@ -31,9 +31,16 @@ chrome.action.onClicked.addListener((tab) => {
     return;
   }
   
+  // 先注入 Readability.js，再注入 content.js
   chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    files: ['src/content.js']
+    files: ['src/vendor/readability/Readability.js']
+  }).then(() => {
+    // Readability.js 注入成功，再注入 content.js
+    return chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['src/content.js']
+    });
   }).catch(err => {
     // 静默处理特殊页面的注入错误
     if (err.message && err.message.includes('extensions gallery')) {
