@@ -24,24 +24,9 @@ jobs:
         run: |
           # 创建临时打包目录
           mkdir -p dist/package
-          
-          # 确定插件目录（如果 workflow 在 cloze-reading/.github 下，则当前目录就是插件目录）
-          # 如果 workflow 在仓库根目录，则需要进入 cloze-reading 目录
-          if [ -d "cloze-reading/src" ]; then
-            # 在仓库根目录，插件在 cloze-reading 子目录
-            cp -r cloze-reading/src dist/package/
-            cp cloze-reading/manifest.json dist/package/
-            cp cloze-reading/README.md dist/package/
-          elif [ -d "src" ]; then
-            # 已经在插件目录
-            cp -r src dist/package/
-            cp manifest.json dist/package/
-            cp README.md dist/package/
-          else
-            echo "Error: Cannot find plugin files"
-            ls -la
-            exit 1
-          fi
+          cp -r src dist/package/
+          cp manifest.json dist/package/
+          cp README.md dist/package/         
           
           # 进入打包目录创建 zip
           cd dist/package
@@ -79,7 +64,7 @@ jobs:
             4. 开启"开发者模式"
             5. 点击"加载已解压的扩展程序"，选择解压后的文件夹
             
-            ### 变更日志
+            ### 功能说明
             
             查看 [README.md](README.md) 了解详细功能和使用说明。
           draft: false

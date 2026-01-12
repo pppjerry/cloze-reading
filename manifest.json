@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "cloze-reading",
-  "version": "0.1.0",
-  "description": "把网页正文变成阅读理解型挖空题（Cloze），支持 Ollama、Google AI Studio、阿里云通义千问。",
+  "version": "1.0.0",
+  "description": "基于LLM把网页正文变成“完型填空”，给阅读增加点摩擦，让你阅读更深刻",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
     "http://localhost/*",
