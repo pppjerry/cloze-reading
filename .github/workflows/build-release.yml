@@ -26,10 +26,26 @@ jobs:
           mkdir -p dist/package
           cp -r src dist/package/
           cp manifest.json dist/package/
-          cp README.md dist/package/         
+          cp README.md dist/package/
           
-          # 进入打包目录创建 zip
+          # 确保打包版本的 manifest.json 使用正式版本号（移除 -dev, -test 等后缀）
+          # 从 tag 中提取版本号（去掉 v 前缀）
+          VERSION="${{ steps.tag.outputs.name }}"
+          VERSION=${VERSION#v}  # 移除 v 前缀
+          VERSION=${VERSION%%-*}  # 移除 -dev, -test 等后缀
+          
+          # 更新 manifest.json 中的版本号
           cd dist/package
+          if command -v jq &> /dev/null; then
+            # 如果有 jq，使用 jq 更新版本号
+            jq ".version = \"$VERSION\"" manifest.json > manifest.json.tmp && mv manifest.json.tmp manifest.json
+          else
+            # 如果没有 jq，使用 sed 更新版本号
+            sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" manifest.json
+            rm -f manifest.json.bak
+          fi
+          
+          # 创建 zip 文件
           zip -r "../cloze-reading-${{ steps.tag.outputs.name }}.zip" . \
             -x "*.DS_Store" \
             -x "*/.git/*"

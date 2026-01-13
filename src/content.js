@@ -1,6 +1,41 @@
 // src/content.js
 // Cloze-Reading v2.0 Content Script
 
+// 日志工具：检查是否是开发版本
+// 如果版本号包含 -dev, -test, -beta 等后缀，则认为是开发版本，会打印日志
+// 正式版本（如 1.0.0）不会打印日志
+function isDevVersion() {
+  try {
+    const manifest = chrome.runtime.getManifest();
+    const version = manifest.version || '';
+    // 检查版本号是否包含开发标识
+    return /-(dev|test|beta|alpha|debug)/i.test(version);
+  } catch (e) {
+    // 如果无法获取 manifest，默认认为是开发版本（安全起见）
+    return true;
+  }
+}
+
+const DEBUG = isDevVersion();
+
+// 日志函数：只在开发版本中打印
+function debugLog(...args) {
+  if (DEBUG) {
+    console.log(...args);
+  }
+}
+
+function debugWarn(...args) {
+  if (DEBUG) {
+    console.warn(...args);
+  }
+}
+
+function debugError(...args) {
+  // 错误日志始终打印，即使在生产版本
+  console.error(...args);
+}
+
 // 检查扩展上下文是否有效
 function isExtensionContextValid() {
   try {
@@ -97,13 +132,13 @@ if (!window.ClozeReadingApp) {
       chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (request.type === 'LOG') {
           const { level = 'log', args = [] } = request;
-          if (level === 'error') {
-            console.error(...args);
-          } else if (level === 'warn') {
-            console.warn(...args);
-          } else {
-            console.log(...args);
-          }
+        if (level === 'error') {
+          debugError(...args);
+        } else if (level === 'warn') {
+          debugWarn(...args);
+        } else {
+          debugLog(...args);
+        }
         }
       });
     },
@@ -122,13 +157,13 @@ if (!window.ClozeReadingApp) {
     async loadReadability() {
       // 如果已经加载，直接返回
       if (typeof window.Readability !== 'undefined' && typeof window.Readability === 'function') {
-        console.log('✓ Readability 已加载（通过 executeScript 注入）');
+        debugLog('✓ Readability 已加载（通过 executeScript 注入）');
         return;
       }
       
       // 检查全局 Readability（可能通过 executeScript 注入了但还没绑定到 window）
       if (typeof Readability !== 'undefined' && typeof Readability === 'function') {
-        console.log('发现全局 Readability，绑定到 window');
+        debugLog('发现全局 Readability，绑定到 window');
         window.Readability = Readability;
         return;
       }
@@ -138,13 +173,13 @@ if (!window.ClozeReadingApp) {
         // 检查是否已经有脚本标签在加载
         const existingScript = document.querySelector('script[data-readability]');
         if (existingScript) {
-          console.log('Readability 脚本正在加载中，等待...');
+            debugLog('Readability 脚本正在加载中，等待...');
           let attempts = 0;
           const maxAttempts = 60; // 增加到 3 秒
           const checkReadability = () => {
             attempts++;
             if (typeof window.Readability === 'function') {
-              console.log('✓ Readability 加载成功（已有脚本）');
+                debugLog('✓ Readability 加载成功（已有脚本）');
               resolve();
             } else if (attempts >= maxAttempts) {
               reject(new Error('Readability 加载超时：window.Readability 不是函数。请刷新页面后重试。'));
@@ -157,16 +192,16 @@ if (!window.ClozeReadingApp) {
         }
 
         const scriptUrl = chrome.runtime.getURL('src/vendor/readability/Readability.js');
-        console.log('正在通过 script 标签加载 Readability.js:', scriptUrl);
+        debugLog('正在通过 script 标签加载 Readability.js:', scriptUrl);
         
         // 验证 URL 是否可访问
         fetch(scriptUrl, { method: 'HEAD' }).then(response => {
           if (!response.ok) {
             throw new Error(`Readability.js 文件不存在或无法访问: HTTP ${response.status}`);
           }
-          console.log('✓ Readability.js 文件可访问');
+          debugLog('✓ Readability.js 文件可访问');
         }).catch(err => {
-          console.warn('无法验证 Readability.js 文件，继续尝试加载:', err);
+          debugWarn('无法验证 Readability.js 文件，继续尝试加载:', err);
         });
 
         const script = document.createElement('script');
@@ -198,7 +233,7 @@ if (!window.ClozeReadingApp) {
         }, 5000);
         
         script.onload = () => {
-          console.log('Readability.js 脚本标签 onload 事件触发');
+          debugLog('Readability.js 脚本标签 onload 事件触发');
           clearTimeout(timeoutId);
           
           // 恢复原始错误处理
@@ -215,16 +250,16 @@ if (!window.ClozeReadingApp) {
           try {
             // 检查脚本是否真的执行了（通过检查是否有 Readability 构造函数）
             if (typeof Readability !== 'undefined' && typeof Readability === 'function') {
-              console.log('发现全局 Readability 函数，手动绑定到 window');
+              debugLog('发现全局 Readability 函数，手动绑定到 window');
               window.Readability = Readability;
             }
           } catch (e) {
-            console.warn('检查全局 Readability 时出错:', e);
+            debugWarn('检查全局 Readability 时出错:', e);
           }
           
           // 立即检查一次
           if (typeof window.Readability === 'function') {
-            console.log('✓ Readability 加载成功（立即检查）');
+            debugLog('✓ Readability 加载成功（立即检查）');
             resolve();
             return;
           }
@@ -239,7 +274,7 @@ if (!window.ClozeReadingApp) {
             // 每次检查时都尝试手动绑定（以防脚本延迟执行）
             try {
               if (typeof Readability !== 'undefined' && typeof Readability === 'function' && typeof window.Readability !== 'function') {
-                console.log('尝试手动绑定 Readability 到 window');
+                debugLog('尝试手动绑定 Readability 到 window');
                 window.Readability = Readability;
               }
             } catch (e) {
@@ -248,7 +283,7 @@ if (!window.ClozeReadingApp) {
             
             // 检查 window.Readability
             if (typeof window.Readability === 'function') {
-              console.log('✓ Readability 加载成功（通过 script 标签，轮询检查）');
+                debugLog('✓ Readability 加载成功（通过 script 标签，轮询检查）');
               resolve();
               return;
             }
@@ -270,7 +305,7 @@ if (!window.ClozeReadingApp) {
               
               // 最后尝试：如果 Readability 存在但类型不对，尝试修复
               if (typeof Readability !== 'undefined') {
-                console.warn('Readability 存在但类型不是 function:', typeof Readability);
+                debugWarn('Readability 存在但类型不是 function:', typeof Readability);
               }
               
               reject(new Error('Readability 加载失败：window.Readability 不是函数。脚本可能未正确执行。请检查浏览器控制台是否有 JavaScript 错误，或刷新页面后重试。'));
@@ -299,7 +334,7 @@ if (!window.ClozeReadingApp) {
         
         // 添加到 head
         (document.head || document.documentElement).appendChild(script);
-        console.log('Readability.js script 标签已添加到 DOM');
+        debugLog('Readability.js script 标签已添加到 DOM');
       });
     },
 
@@ -481,7 +516,7 @@ if (!window.ClozeReadingApp) {
       const panel = document.getElementById('cr-floating-panel');
       if (!panel || !panel.shadowRoot) {
         // 如果面板不存在，只输出到控制台，不抛出错误
-        console.log('[状态更新]', text);
+        debugLog('[状态更新]', text);
         return;
       }
       const shadow = panel.shadowRoot;
@@ -569,16 +604,16 @@ if (!window.ClozeReadingApp) {
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = article.content;
       readabilityParagraphs = Array.from(tempDiv.querySelectorAll('p'));
-      console.log(`[Readability] 提取到 ${readabilityParagraphs.length} 个段落`);
-      console.log(`[Readability] 文章标题: ${article.title || '无'}`);
-      console.log(`[Readability] 文章长度: ${article.length || 0} 字符`);
+      debugLog(`[Readability] 提取到 ${readabilityParagraphs.length} 个段落`);
+      debugLog(`[Readability] 文章标题: ${article.title || '无'}`);
+      debugLog(`[Readability] 文章长度: ${article.length || 0} 字符`);
       
       if (readabilityParagraphs.length === 0) {
         throw new Error('Readability 未提取到任何段落，无法生成题目');
       }
 
       // 通过 Readability 结果，在原始 DOM 中找到对应段落
-      console.log(`[正文提取] 开始匹配 Readability 提取的 ${readabilityParagraphs.length} 个段落到原始 DOM`);
+      debugLog(`[正文提取] 开始匹配 Readability 提取的 ${readabilityParagraphs.length} 个段落到原始 DOM`);
       const allOriginalPTags = document.querySelectorAll('p');
       let matchedCount = 0;
       
@@ -605,19 +640,19 @@ if (!window.ClozeReadingApp) {
               id, element: originalP, originalHTML: originalP.innerHTML, text: originalText, status: 'pending'
             });
             matchedCount++;
-            console.log(`[正文提取] 段落 ${index + 1}/${readabilityParagraphs.length} 匹配成功:`, originalText.substring(0, 50) + '...');
+            debugLog(`[正文提取] 段落 ${index + 1}/${readabilityParagraphs.length} 匹配成功:`, originalText.substring(0, 50) + '...');
             break;
           }
         }
       });
       
-      console.log(`[正文提取] Readability 匹配完成: ${matchedCount}/${readabilityParagraphs.length} 个段落成功匹配`);
+      debugLog(`[正文提取] Readability 匹配完成: ${matchedCount}/${readabilityParagraphs.length} 个段落成功匹配`);
       
       if (paragraphs.length === 0) {
         throw new Error('Readability 提取的段落无法匹配到页面中的原始内容，无法生成题目');
       }
 
-      console.log(`[正文提取] 最终结果: 共找到 ${paragraphs.length} 个段落`);
+      debugLog(`[正文提取] 最终结果: 共找到 ${paragraphs.length} 个段落`);
       return paragraphs;
     },
 
@@ -659,7 +694,7 @@ if (!window.ClozeReadingApp) {
       // 确保面板存在
       let panel = document.getElementById('cr-floating-panel');
       if (!panel) {
-        console.log('浮动面板不存在，正在创建...');
+        debugLog('浮动面板不存在，正在创建...');
         this.createFloatingPanel();
         panel = document.getElementById('cr-floating-panel');
       }
@@ -791,7 +826,7 @@ if (!window.ClozeReadingApp) {
       const seenTargets = new Set();
       const uniqueClozes = clozes.filter(cloze => {
         if (seenTargets.has(cloze.target)) {
-          console.warn(`[去重] 跳过重复的 target: ${cloze.target}`);
+          debugWarn(`[去重] 跳过重复的 target: ${cloze.target}`);
           return false;
         }
         seenTargets.add(cloze.target);
@@ -822,9 +857,9 @@ if (!window.ClozeReadingApp) {
 
         const replaced = this.replaceTextInNode(el, cloze.target, selectHtml, replacedRanges);
         if (replaced) {
-          console.log(`[替换成功] ${cloze.target} -> 下拉框 ${index + 1}`);
+          debugLog(`[替换成功] ${cloze.target} -> 下拉框 ${index + 1}`);
         } else {
-          console.warn(`[替换失败] 未找到或已替换: ${cloze.target}`);
+          debugWarn(`[替换失败] 未找到或已替换: ${cloze.target}`);
         }
       });
       
@@ -840,7 +875,7 @@ if (!window.ClozeReadingApp) {
       for (const select of existingSelects) {
         const answer = select.dataset.answer;
         if (answer === targetText) {
-          console.warn(`[跳过] ${targetText} 已经被替换过了`);
+          debugWarn(`[跳过] ${targetText} 已经被替换过了`);
           return false;
         }
       }

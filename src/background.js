@@ -11,6 +11,41 @@ const DEFAULT_SETTINGS = {
   googleModel: "gemini-2.5-flash",
 };
 
+// 日志工具：检查是否是开发版本
+// 如果版本号包含 -dev, -test, -beta 等后缀，则认为是开发版本，会打印日志
+// 正式版本（如 1.0.0）不会打印日志
+function isDevVersion() {
+  try {
+    const manifest = chrome.runtime.getManifest();
+    const version = manifest.version || '';
+    // 检查版本号是否包含开发标识
+    return /-(dev|test|beta|alpha|debug)/i.test(version);
+  } catch (e) {
+    // 如果无法获取 manifest，默认认为是开发版本（安全起见）
+    return true;
+  }
+}
+
+const DEBUG = isDevVersion();
+
+// 日志函数：只在开发版本中打印
+function debugLog(...args) {
+  if (DEBUG) {
+    console.log(...args);
+  }
+}
+
+function debugWarn(...args) {
+  if (DEBUG) {
+    console.warn(...args);
+  }
+}
+
+function debugError(...args) {
+  // 错误日志始终打印，即使在生产版本
+  console.error(...args);
+}
+
 // 1. 监听插件图标点击，注入 content.js
 chrome.action.onClicked.addListener((tab) => {
   if (!tab.id || !tab.url) return;
@@ -22,12 +57,12 @@ chrome.action.onClicked.addListener((tab) => {
     
     // 跳过 chrome://, edge://, about:, moz-extension:// 等特殊协议
     if (protocol === 'chrome:' || protocol === 'edge:' || protocol === 'about:' || protocol === 'moz-extension:') {
-      console.warn('Cannot inject script into special page:', tab.url);
+      debugWarn('Cannot inject script into special page:', tab.url);
       return;
     }
     } catch (e) {
     // URL 解析失败，可能是特殊页面，跳过
-    console.warn('Cannot parse URL, skipping injection:', tab.url);
+    debugWarn('Cannot parse URL, skipping injection:', tab.url);
     return;
   }
   
@@ -48,7 +83,7 @@ chrome.action.onClicked.addListener((tab) => {
       return;
     }
     // 其他错误正常记录
-    console.error('Script injection failed:', err);
+    debugError('Script injection failed:', err);
   });
 });
 
@@ -59,7 +94,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     checkStatus()
       .then(sendResponse)
       .catch(err => {
-        console.error('checkStatus failed:', err);
+        debugError('checkStatus failed:', err);
         sendResponse({ success: false, error: err.message || '未知错误' });
       });
     return true; // 保持通道开启以进行异步响应
@@ -123,9 +158,9 @@ function countWords(text) {
 }
 
 // 4. 处理生成请求
-// 辅助函数：发送日志到 content script
+// 辅助函数：发送日志到 content script（只在开发版本）
 function logToConsole(tabId, level, ...args) {
-  if (!tabId) return;
+  if (!DEBUG || !tabId) return; // 生产版本不发送日志
   chrome.tabs.sendMessage(tabId, {
     type: 'LOG',
     level: level, // 'log', 'warn', 'error'
@@ -177,7 +212,7 @@ async function handleGenerateCloze({ paragraph }, tabId, sendResponse) {
     sendResponse({ success: true, id, data: result });
 
   } catch (error) {
-    console.error('Generation failed:', error);
+    debugError('Generation failed:', error);
     logToConsole(tabId, 'error', `[错误] 段落 ${id}:`, error.message);
     sendResponse({ success: false, id, error: error.message });
   }
