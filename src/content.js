@@ -111,7 +111,139 @@ if (!window.ClozeReadingApp) {
       isProcessing: false,
       paragraphs: [],
       model: 'qwen2.5:7b',
-      stats: { total: 0, done: 0, success: 0 }
+      stats: { total: 0, done: 0, success: 0 },
+      language: 'zh', // 'zh' | 'en'，界面语言
+    },
+
+    // 简单的中英文文案
+    i18n: {
+      zh: {
+        title: '📝 Cloze Reading',
+        statusReady: '准备就绪',
+        btnGenerate: '开始生成',
+        btnSubmit: '提交答案',
+        btnReset: '恢复原文',
+        settingsSave: '保存设置',
+        labelApiProvider: 'API 提供者',
+        labelLanguage: '界面语言 / UI Language',
+        providerOllama: 'Ollama (本地)',
+        providerGoogle: 'Google AI Studio',
+        providerDashscope: '阿里云通义千问',
+        status: {
+          score: '得分: {correct} / {total}',
+          restored: '已恢复原文 (当前: {provider})',
+          checkingConnection: '检查连接: {provider}...',
+          connectFailedUnknown: '连接失败: 无法获取服务状态，请检查扩展是否正常运行',
+          connectFailedWithError: '连接失败: {error}',
+          modelNotReady: '模型 {model} 未下载或不可用。请点击设置图标检查配置。',
+          parsing: '正在解析网页...',
+          parseFailed: '正文识别失败: {error}',
+          noParagraphs: '未找到适合生成的正文段落',
+          generating: '生成中 ({provider}) {current}/{total}...',
+          generatedSummary: '生成完成! 成功 {success}/{total}',
+          canContinue: '可以继续做题或提交答案',
+          contextInvalid: '扩展上下文失效，请刷新页面',
+          contextInvalidWithRetry: '错误：浮动面板未初始化，请刷新页面后重试',
+          unknownProvider: '未知的 API 提供者',
+          settingsSaved: '设置已保存！',
+        },
+      },
+      en: {
+        title: '📝 Cloze Reading',
+        statusReady: 'Ready',
+        btnGenerate: 'Start',
+        btnSubmit: 'Submit',
+        btnReset: 'Restore',
+        settingsSave: 'Save Settings',
+        labelApiProvider: 'API Provider',
+        labelLanguage: 'UI Language',
+        providerOllama: 'Ollama (local)',
+        providerGoogle: 'Google AI Studio',
+        providerDashscope: 'Alibaba DashScope',
+        status: {
+          score: 'Score: {correct} / {total}',
+          restored: 'Original restored (current: {provider})',
+          checkingConnection: 'Checking: {provider}...',
+          connectFailedUnknown: 'Connection failed: cannot reach service, please check whether the extension is running.',
+          connectFailedWithError: 'Connection failed: {error}',
+          modelNotReady: 'Model {model} is not downloaded or unavailable. Click the settings icon to check configuration.',
+          parsing: 'Parsing page...',
+          parseFailed: 'Content extraction failed: {error}',
+          noParagraphs: 'No suitable paragraphs found for question generation.',
+          generating: 'Generating ({provider}) {current}/{total}...',
+          generatedSummary: 'Generation complete! Success {success}/{total}',
+          canContinue: 'You can continue practicing or submit your answers.',
+          contextInvalid: 'Extension context invalid, please refresh the page.',
+          contextInvalidWithRetry: 'Error: panel not initialized. Please refresh the page and try again.',
+          unknownProvider: 'Unknown API provider',
+          settingsSaved: 'Settings saved!',
+        },
+      }
+    },
+
+    // 简单的文案获取工具，支持占位符替换
+    t(key, params = {}) {
+      const lang = this.state.language || 'zh';
+      const fallbacks = ['zh'];
+
+      const resolve = (langKey) => {
+        let value = this.i18n[langKey];
+        for (const part of key.split('.')) {
+          if (!value) break;
+          value = value[part];
+        }
+        return typeof value === 'string' ? value : null;
+      };
+
+      let template = resolve(lang);
+      if (!template) {
+        for (const fb of fallbacks) {
+          template = resolve(fb);
+          if (template) break;
+        }
+      }
+      if (!template) return '';
+
+      return template.replace(/\{(\w+)\}/g, (_, k) =>
+        Object.prototype.hasOwnProperty.call(params, k) ? String(params[k]) : `{${k}}`
+      );
+    },
+
+    applyLanguage(shadow) {
+      const lang = this.state.language || 'zh';
+      const dict = this.i18n[lang] || this.i18n.zh;
+
+      const logo = shadow.querySelector('.cr-logo');
+      if (logo) logo.textContent = dict.title;
+
+      const statusEl = shadow.querySelector('.cr-status');
+      if (statusEl &&
+          (statusEl.textContent === this.i18n.zh.statusReady ||
+           statusEl.textContent === this.i18n.en.statusReady)) {
+        statusEl.textContent = dict.statusReady;
+      }
+
+      const btnGenerate = shadow.getElementById('btn-generate');
+      const btnSubmit = shadow.getElementById('btn-submit');
+      const btnReset = shadow.getElementById('btn-reset');
+      const btnSave = shadow.getElementById('btn-save-settings');
+
+      if (btnGenerate) btnGenerate.textContent = dict.btnGenerate;
+      if (btnSubmit) btnSubmit.textContent = dict.btnSubmit;
+      if (btnReset) btnReset.textContent = dict.btnReset;
+      if (btnSave) btnSave.textContent = dict.settingsSave;
+
+      const apiLabel = shadow.querySelector('label[for="cr-api-provider-label"]');
+      if (apiLabel) apiLabel.textContent = dict.labelApiProvider;
+
+      // Provider 选项文本
+      const providerSelect = shadow.getElementById('cr-api-provider');
+      if (providerSelect && providerSelect.options && providerSelect.options.length >= 3) {
+        const [optOllama, optGoogle, optDashscope] = providerSelect.options;
+        if (optOllama) optOllama.textContent = dict.providerOllama || 'Ollama (本地)';
+        if (optGoogle) optGoogle.textContent = dict.providerGoogle || 'Google AI Studio';
+        if (optDashscope) optDashscope.textContent = dict.providerDashscope || '阿里云通义千问';
+      }
     },
     
     async init() {
@@ -120,11 +252,17 @@ if (!window.ClozeReadingApp) {
       this.setupMessageListener();
       
       try {
-        const config = await safeStorageGet(['apiProvider', 'ollamaModel', 'googleModel', 'dashscopeModel']);
+        const config = await safeStorageGet(['apiProvider', 'ollamaModel', 'googleModel', 'dashscopeModel', 'language']);
         const apiProvider = config.apiProvider || 'ollama';
         this.state.model = getModelFromConfig(config, apiProvider);
+        this.state.language = config.language || 'zh';
+
+        const panel = document.getElementById('cr-floating-panel');
+        if (panel && panel.shadowRoot) {
+          this.applyLanguage(panel.shadowRoot);
+        }
       } catch (e) {
-        this.updateStatus('扩展上下文失效，请刷新页面');
+        this.updateStatus(this.t('status.contextInvalid'));
       }
     },
 
@@ -358,7 +496,11 @@ if (!window.ClozeReadingApp) {
       container.innerHTML = `
         <div class="cr-header">
           <span class="cr-logo">📝 Cloze Reading</span>
-          <div style="display:flex; gap:8px;">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <select id="cr-language" style="padding: 2px 6px; border-radius: 6px; background: rgba(15,23,42,0.8); border: 1px solid rgba(148,163,184,0.6); color: #e5e7eb; font-size: 12px;">
+              <option value="zh">中文</option>
+              <option value="en">EN</option>
+            </select>
             <button class="cr-close" id="btn-settings" title="设置" style="font-size:16px;">⚙️</button>
             <button class="cr-close" id="btn-close" title="关闭">×</button>
           </div>
@@ -376,7 +518,7 @@ if (!window.ClozeReadingApp) {
           </div>
           <div id="cr-settings" class="cr-settings" style="display:none; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
             <div style="margin-bottom: 10px;">
-              <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">API 提供者</label>
+              <label for="cr-api-provider-label" style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">API 提供者</label>
               <select id="cr-api-provider" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px;">
                 <option value="ollama">Ollama (本地)</option>
                 <option value="google">Google AI Studio</option>
@@ -464,6 +606,12 @@ if (!window.ClozeReadingApp) {
         }
       });
 
+      // 语言切换
+      shadow.getElementById('cr-language').addEventListener('change', (e) => {
+        this.state.language = e.target.value;
+        this.applyLanguage(shadow);
+      });
+
       // 保存设置
       shadow.getElementById('btn-save-settings').addEventListener('click', () => {
         this.saveSettingsFromPanel(shadow);
@@ -507,7 +655,7 @@ if (!window.ClozeReadingApp) {
         select.disabled = true; 
       });
       
-      this.updateStatus(`得分: ${correctCount} / ${totalCount}`);
+      this.updateStatus(this.t('status.score', { correct: correctCount, total: totalCount }));
       shadow.getElementById('btn-submit').style.display = 'none';
       shadow.getElementById('btn-reset').style.display = 'inline-block';
     },
@@ -681,11 +829,11 @@ if (!window.ClozeReadingApp) {
         try {
           config = await safeStorageGet(['apiProvider']);
         } catch (e) {
-          this.updateStatus('扩展上下文失效，请刷新页面');
-      return;
-    }
+          this.updateStatus(this.t('status.contextInvalid'));
+          return;
+        }
         const apiProvider = config.apiProvider || 'ollama';
-        this.updateStatus(`已恢复原文 (当前: ${getProviderName(apiProvider)})`);
+        this.updateStatus(this.t('status.restored', { provider: getProviderName(apiProvider) }));
       }
       this.state.paragraphs = [];
     },
@@ -701,7 +849,7 @@ if (!window.ClozeReadingApp) {
       
       if (!panel || !panel.shadowRoot) {
         console.error('浮动面板创建失败，无法开始生成');
-        this.updateStatus('错误：浮动面板未初始化，请刷新页面后重试');
+        this.updateStatus(this.t('status.contextInvalidWithRetry'));
         return;
       }
       const shadow = panel.shadowRoot;
@@ -710,13 +858,13 @@ if (!window.ClozeReadingApp) {
       try {
         config = await safeStorageGet(['apiProvider', 'ollamaModel', 'googleModel', 'dashscopeModel']);
       } catch (e) {
-        this.updateStatus(e.message || '扩展上下文失效，请刷新页面后重试');
+        this.updateStatus(e.message || this.t('status.contextInvalid'));
         return;
       }
       const apiProvider = config.apiProvider || 'ollama';
       
       this.state.model = getModelFromConfig(config, apiProvider);
-      this.updateStatus(`检查连接: ${getProviderName(apiProvider)}...`);
+      this.updateStatus(this.t('status.checkingConnection', { provider: getProviderName(apiProvider) }));
       let check;
       try {
         check = await safeSendMessage({ 
@@ -724,36 +872,36 @@ if (!window.ClozeReadingApp) {
           model: this.state.model 
         });
       } catch (e) {
-        this.updateStatus(e.message || '扩展上下文失效，请刷新页面后重试');
+        this.updateStatus(e.message || this.t('status.contextInvalid'));
         return;
       }
       
       // 防御性检查：如果 check 为 undefined，说明 Background 没有响应
       if (!check || typeof check !== 'object') {
-        this.updateStatus('连接失败: 无法获取服务状态，请检查扩展是否正常运行');
+        this.updateStatus(this.t('status.connectFailedUnknown'));
       return;
     }
 
       if (!check.success) {
-        this.updateStatus(`连接失败: ${check.error || '未知错误'}`);
+        this.updateStatus(this.t('status.connectFailedWithError', { error: check.error || 'Unknown error' }));
       return;
     }
       if (apiProvider === 'ollama' && !check.modelExists) {
-        this.updateStatus(`模型 ${this.state.model} 未下载或不可用。请点击设置图标检查配置。`);
+        this.updateStatus(this.t('status.modelNotReady', { model: this.state.model }));
       return;
     }
 
-      this.updateStatus('正在解析网页...');
+      this.updateStatus(this.t('status.parsing'));
       try {
         this.state.paragraphs = await this.parseDocument();
       } catch (error) {
-        this.updateStatus(`正文识别失败: ${error.message}`);
+        this.updateStatus(this.t('status.parseFailed', { error: error.message }));
         console.error('[正文提取错误]', error);
         return;
       }
       
       if (this.state.paragraphs.length === 0) {
-        this.updateStatus('未找到适合生成的正文段落');
+        this.updateStatus(this.t('status.noParagraphs'));
         return;
       }
 
@@ -774,7 +922,7 @@ if (!window.ClozeReadingApp) {
       try {
         config = await safeStorageGet(['apiProvider']);
       } catch (e) {
-        this.updateStatus(e.message || '扩展上下文失效，请刷新页面后重试');
+        this.updateStatus(e.message || this.t('status.contextInvalid'));
         return;
       }
       const apiProvider = config.apiProvider || 'ollama';
@@ -783,7 +931,11 @@ if (!window.ClozeReadingApp) {
         const p = this.state.paragraphs[i];
         p.status = 'processing';
         
-        this.updateStatus(`生成中 (${providerName}) ${i+1}/${this.state.paragraphs.length}...`, {
+        this.updateStatus(this.t('status.generating', {
+          provider: providerName,
+          current: i + 1,
+          total: this.state.paragraphs.length
+        }), {
           current: i,
           total: this.state.paragraphs.length
         });
@@ -807,7 +959,10 @@ if (!window.ClozeReadingApp) {
         p.status = 'done';
       }
       
-      this.updateStatus(`生成完成! 成功 ${this.state.stats.success}/${this.state.stats.total}`, {
+      this.updateStatus(this.t('status.generatedSummary', {
+        success: this.state.stats.success,
+        total: this.state.stats.total
+      }), {
         current: this.state.stats.total,
         total: this.state.stats.total
       });
@@ -960,14 +1115,18 @@ if (!window.ClozeReadingApp) {
     async loadSettingsToPanel(shadow) {
       let settings;
       try {
-        settings = await safeStorageGet(['apiProvider', 'ollamaBaseUrl', 'ollamaModel', 'googleApiKey', 'googleModel', 'dashscopeApiKey', 'dashscopeModel']);
+        settings = await safeStorageGet(['apiProvider', 'ollamaBaseUrl', 'ollamaModel', 'googleApiKey', 'googleModel', 'dashscopeApiKey', 'dashscopeModel', 'language']);
       } catch (e) {
-        this.updateStatus(e.message || '扩展上下文失效，请刷新页面');
+        this.updateStatus(e.message || this.t('status.contextInvalid'));
       return;
     }
       
       const apiProvider = settings.apiProvider || 'ollama';
       shadow.getElementById('cr-api-provider').value = apiProvider;
+      const lang = settings.language || this.state.language || 'zh';
+      this.state.language = lang;
+      const langSelect = shadow.getElementById('cr-language');
+      if (langSelect) langSelect.value = lang;
       
       // 更新可见性
       shadow.getElementById('cr-ollama-config').style.display = 'none';
@@ -989,11 +1148,16 @@ if (!window.ClozeReadingApp) {
       shadow.getElementById('cr-google-model').value = settings.googleModel || 'gemini-2.5-flash';
       shadow.getElementById('cr-dashscope-key').value = settings.dashscopeApiKey || '';
       shadow.getElementById('cr-dashscope-model').value = settings.dashscopeModel || 'qwen-plus';
+
+      // 应用语言
+      this.applyLanguage(shadow);
     },
 
     async saveSettingsFromPanel(shadow) {
       const apiProvider = shadow.getElementById('cr-api-provider').value;
-      const settings = { apiProvider };
+      const language = shadow.getElementById('cr-language').value || 'zh';
+      const settings = { apiProvider, language };
+      this.state.language = language;
       
       // 根据 provider 读取对应配置
       const configMap = {
@@ -1019,7 +1183,7 @@ if (!window.ClozeReadingApp) {
       
       const config = configMap[apiProvider];
       if (!config) {
-        this.updateStatus('未知的 API 提供者');
+        this.updateStatus(this.t('status.unknownProvider'));
         return;
       }
       
@@ -1046,7 +1210,7 @@ if (!window.ClozeReadingApp) {
       try {
         await safeStorageSet(settings);
         this.state.model = getModelFromConfig(settings, apiProvider);
-        this.updateStatus('设置已保存！');
+        this.updateStatus(this.t('status.settingsSaved'));
         setTimeout(() => {
           shadow.getElementById('cr-settings').style.display = 'none';
         }, 1000);
@@ -1080,7 +1244,7 @@ if (window.ClozeReadingApp) {
           btnSubmit.disabled = false;
         }
         if (btnReset) btnReset.style.display = 'inline-block';
-        window.ClozeReadingApp.updateStatus('可以继续做题或提交答案');
+        window.ClozeReadingApp.updateStatus(window.ClozeReadingApp.t('status.canContinue'));
       } else {
         // 没有题目，显示生成按钮
         const btnGenerate = shadow.getElementById('btn-generate');
@@ -1089,7 +1253,8 @@ if (window.ClozeReadingApp) {
         if (btnGenerate) btnGenerate.style.display = 'inline-block';
         if (btnSubmit) btnSubmit.style.display = 'none';
         if (btnReset) btnReset.style.display = 'none';
-        window.ClozeReadingApp.updateStatus('准备就绪');
+        window.ClozeReadingApp.applyLanguage(shadow);
+        window.ClozeReadingApp.updateStatus(window.ClozeReadingApp.state.language === 'en' ? 'Ready' : '准备就绪');
       }
     }
   }
