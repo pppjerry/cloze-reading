@@ -2,31 +2,34 @@
 // Cloze-Reading v2.0 Content Script
 
 // 日志工具：检查是否是开发版本
-// 如果版本号包含 -dev, -test, -beta 等后缀，则认为是开发版本，会打印日志
-// 正式版本（如 1.0.0）不会打印日志
+// 如果扩展名称（name）包含 -debug, -dev, -test, -beta 等后缀，则认为是开发版本，会打印日志
+// 正式版本（name 为 "cloze-reading"）不会打印日志
 function isDevVersion() {
   try {
     const manifest = chrome.runtime.getManifest();
-    const version = manifest.version || '';
-    // 检查版本号是否包含开发标识
-    return /-(dev|test|beta|alpha|debug)/i.test(version);
+    const name = manifest.name || '';
+    // 检查扩展名称是否包含开发标识
+    return /-(dev|test|beta|alpha|debug)/i.test(name);
   } catch (e) {
     // 如果无法获取 manifest，默认认为是开发版本（安全起见）
     return true;
   }
 }
 
-const DEBUG = isDevVersion();
+// 避免重复声明 DEBUG（当脚本被多次注入时）
+if (typeof window.__CLOZE_READING_DEBUG__ === 'undefined') {
+  window.__CLOZE_READING_DEBUG__ = isDevVersion();
+}
 
 // 日志函数：只在开发版本中打印
 function debugLog(...args) {
-  if (DEBUG) {
+  if (window.__CLOZE_READING_DEBUG__) {
     console.log(...args);
   }
 }
 
 function debugWarn(...args) {
-  if (DEBUG) {
+  if (window.__CLOZE_READING_DEBUG__) {
     console.warn(...args);
   }
 }
@@ -113,13 +116,16 @@ if (!window.ClozeReadingApp) {
       model: 'qwen2.5:7b',
       stats: { total: 0, done: 0, success: 0 },
       language: 'zh', // 'zh' | 'en'，界面语言
+      statusKey: null,
+      statusParams: null,
+      statusText: '',
+      generationStartTime: null,
     },
 
     // 简单的中英文文案
     i18n: {
       zh: {
         title: '📝 Cloze Reading',
-        statusReady: '准备就绪',
         btnGenerate: '开始生成',
         btnSubmit: '提交答案',
         btnReset: '恢复原文',
@@ -130,6 +136,7 @@ if (!window.ClozeReadingApp) {
         providerGoogle: 'Google AI Studio',
         providerDashscope: '阿里云通义千问',
         status: {
+          statusReady: '准备就绪',
           score: '得分: {correct} / {total}',
           restored: '已恢复原文 (当前: {provider})',
           checkingConnection: '检查连接: {provider}...',
@@ -140,7 +147,7 @@ if (!window.ClozeReadingApp) {
           parseFailed: '正文识别失败: {error}',
           noParagraphs: '未找到适合生成的正文段落',
           generating: '生成中 ({provider}) {current}/{total}...',
-          generatedSummary: '生成完成! 成功 {success}/{total}',
+          generatedSummary: '生成完成! 成功 {success}/{total}（耗时 {seconds} 秒）',
           canContinue: '可以继续做题或提交答案',
           contextInvalid: '扩展上下文失效，请刷新页面',
           contextInvalidWithRetry: '错误：浮动面板未初始化，请刷新页面后重试',
@@ -150,7 +157,6 @@ if (!window.ClozeReadingApp) {
       },
       en: {
         title: '📝 Cloze Reading',
-        statusReady: 'Ready',
         btnGenerate: 'Start',
         btnSubmit: 'Submit',
         btnReset: 'Restore',
@@ -161,6 +167,7 @@ if (!window.ClozeReadingApp) {
         providerGoogle: 'Google AI Studio',
         providerDashscope: 'Alibaba DashScope',
         status: {
+          statusReady: 'Ready',
           score: 'Score: {correct} / {total}',
           restored: 'Original restored (current: {provider})',
           checkingConnection: 'Checking: {provider}...',
@@ -171,7 +178,7 @@ if (!window.ClozeReadingApp) {
           parseFailed: 'Content extraction failed: {error}',
           noParagraphs: 'No suitable paragraphs found for question generation.',
           generating: 'Generating ({provider}) {current}/{total}...',
-          generatedSummary: 'Generation complete! Success {success}/{total}',
+          generatedSummary: 'Generation complete! Success {success}/{total} (time {seconds}s)',
           canContinue: 'You can continue practicing or submit your answers.',
           contextInvalid: 'Extension context invalid, please refresh the page.',
           contextInvalidWithRetry: 'Error: panel not initialized. Please refresh the page and try again.',
@@ -213,14 +220,19 @@ if (!window.ClozeReadingApp) {
       const lang = this.state.language || 'zh';
       const dict = this.i18n[lang] || this.i18n.zh;
 
+      // 更新语言选择器的值
+      const langSelect = shadow.getElementById('cr-language');
+      if (langSelect) {
+        langSelect.value = lang;
+      }
+
       const logo = shadow.querySelector('.cr-logo');
       if (logo) logo.textContent = dict.title;
 
+      // 更新状态文本（如果有状态 key）
       const statusEl = shadow.querySelector('.cr-status');
-      if (statusEl &&
-          (statusEl.textContent === this.i18n.zh.statusReady ||
-           statusEl.textContent === this.i18n.en.statusReady)) {
-        statusEl.textContent = dict.statusReady;
+      if (statusEl && this.state.statusKey) {
+        statusEl.textContent = this.t(this.state.statusKey, this.state.statusParams || {});
       }
 
       const btnGenerate = shadow.getElementById('btn-generate');
@@ -262,7 +274,7 @@ if (!window.ClozeReadingApp) {
           this.applyLanguage(panel.shadowRoot);
         }
       } catch (e) {
-        this.updateStatus(this.t('status.contextInvalid'));
+        this.updateStatusKey('status.contextInvalid');
       }
     },
 
@@ -506,7 +518,7 @@ if (!window.ClozeReadingApp) {
           </div>
         </div>
         <div class="cr-body">
-          <div class="cr-status">准备就绪</div>
+          <div class="cr-status"></div>
           <div class="cr-progress" style="display:none">
             <div class="cr-bar"><div class="cr-bar-inner" style="width:0%"></div></div>
             <span class="cr-count">0/0</span>
@@ -559,6 +571,12 @@ if (!window.ClozeReadingApp) {
       `;
 
       shadow.appendChild(container);
+      
+      // 确保面板可见
+      div.style.display = 'block';
+      div.style.visibility = 'visible';
+      div.style.opacity = '1';
+      
       document.body.appendChild(div);
 
       const btnGenerate = shadow.getElementById('btn-generate');
@@ -610,12 +628,33 @@ if (!window.ClozeReadingApp) {
       shadow.getElementById('cr-language').addEventListener('change', (e) => {
         this.state.language = e.target.value;
         this.applyLanguage(shadow);
+
+        // 语言切换后，重新渲染当前状态文案
+        const statusEl = shadow.querySelector('.cr-status');
+        if (statusEl) {
+          const text = this.state.statusKey
+            ? this.t(this.state.statusKey, this.state.statusParams || {})
+            : (this.state.statusText || '');
+          statusEl.textContent = text;
+        }
       });
 
       // 保存设置
       shadow.getElementById('btn-save-settings').addEventListener('click', () => {
         this.saveSettingsFromPanel(shadow);
       });
+
+      // 设置语言选择器的默认值
+      const langSelect = shadow.getElementById('cr-language');
+      if (langSelect) {
+        langSelect.value = this.state.language || 'zh';
+      }
+
+      // 应用语言（确保按钮和界面文本正确）
+      this.applyLanguage(shadow);
+
+      // 初始化状态文本
+      this.updateStatusKey('status.statusReady');
     },
 
     handleSubmit() {
@@ -655,12 +694,22 @@ if (!window.ClozeReadingApp) {
         select.disabled = true; 
       });
       
-      this.updateStatus(this.t('status.score', { correct: correctCount, total: totalCount }));
+      this.updateStatusKey('status.score', { correct: correctCount, total: totalCount });
       shadow.getElementById('btn-submit').style.display = 'none';
       shadow.getElementById('btn-reset').style.display = 'inline-block';
     },
 
-    updateStatus(text, progress = null) {
+    updateStatus(text, progress = null, meta = null) {
+      // 记录当前状态，便于语言切换时重新渲染
+      if (meta && Object.prototype.hasOwnProperty.call(meta, 'key')) {
+        this.state.statusKey = meta.key;
+        this.state.statusParams = meta.params || {};
+      } else {
+        this.state.statusKey = null;
+        this.state.statusParams = null;
+      }
+      this.state.statusText = text;
+
       const panel = document.getElementById('cr-floating-panel');
       if (!panel || !panel.shadowRoot) {
         // 如果面板不存在，只输出到控制台，不抛出错误
@@ -684,6 +733,12 @@ if (!window.ClozeReadingApp) {
         if (barInner) barInner.style.width = `${pct}%`;
         if (countElement) countElement.textContent = `${current}/${total}`;
       }
+    },
+
+    // 基于 key 的状态更新，便于在语言切换时重新渲染
+    updateStatusKey(key, params = {}, progress = null) {
+      const text = this.t(key, params);
+      this.updateStatus(text, progress, { key, params });
     },
 
     async parseDocument() {
@@ -829,11 +884,11 @@ if (!window.ClozeReadingApp) {
         try {
           config = await safeStorageGet(['apiProvider']);
         } catch (e) {
-          this.updateStatus(this.t('status.contextInvalid'));
+        this.updateStatusKey('status.contextInvalid');
           return;
         }
         const apiProvider = config.apiProvider || 'ollama';
-        this.updateStatus(this.t('status.restored', { provider: getProviderName(apiProvider) }));
+        this.updateStatusKey('status.restored', { provider: getProviderName(apiProvider) });
       }
       this.state.paragraphs = [];
     },
@@ -849,22 +904,29 @@ if (!window.ClozeReadingApp) {
       
       if (!panel || !panel.shadowRoot) {
         console.error('浮动面板创建失败，无法开始生成');
-        this.updateStatus(this.t('status.contextInvalidWithRetry'));
+        this.updateStatusKey('status.contextInvalidWithRetry');
         return;
       }
       const shadow = panel.shadowRoot;
+
+      // 记录开始时间
+      this.state.generationStartTime = performance.now();
       
       let config;
       try {
         config = await safeStorageGet(['apiProvider', 'ollamaModel', 'googleModel', 'dashscopeModel']);
       } catch (e) {
-        this.updateStatus(e.message || this.t('status.contextInvalid'));
+        if (e.message) {
+          this.updateStatus(e.message);
+        } else {
+          this.updateStatusKey('status.contextInvalid');
+        }
         return;
       }
       const apiProvider = config.apiProvider || 'ollama';
       
       this.state.model = getModelFromConfig(config, apiProvider);
-      this.updateStatus(this.t('status.checkingConnection', { provider: getProviderName(apiProvider) }));
+      this.updateStatusKey('status.checkingConnection', { provider: getProviderName(apiProvider) });
       let check;
       try {
         check = await safeSendMessage({ 
@@ -872,36 +934,40 @@ if (!window.ClozeReadingApp) {
           model: this.state.model 
         });
       } catch (e) {
-        this.updateStatus(e.message || this.t('status.contextInvalid'));
+        if (e.message) {
+          this.updateStatus(e.message);
+        } else {
+          this.updateStatusKey('status.contextInvalid');
+        }
         return;
       }
       
       // 防御性检查：如果 check 为 undefined，说明 Background 没有响应
       if (!check || typeof check !== 'object') {
-        this.updateStatus(this.t('status.connectFailedUnknown'));
-      return;
-    }
+        this.updateStatusKey('status.connectFailedUnknown');
+        return;
+      }
 
       if (!check.success) {
-        this.updateStatus(this.t('status.connectFailedWithError', { error: check.error || 'Unknown error' }));
-      return;
-    }
+        this.updateStatusKey('status.connectFailedWithError', { error: check.error || 'Unknown error' });
+        return;
+      }
       if (apiProvider === 'ollama' && !check.modelExists) {
-        this.updateStatus(this.t('status.modelNotReady', { model: this.state.model }));
-      return;
-    }
+        this.updateStatusKey('status.modelNotReady', { model: this.state.model });
+        return;
+      }
 
-      this.updateStatus(this.t('status.parsing'));
+      this.updateStatusKey('status.parsing');
       try {
         this.state.paragraphs = await this.parseDocument();
       } catch (error) {
-        this.updateStatus(this.t('status.parseFailed', { error: error.message }));
+        this.updateStatusKey('status.parseFailed', { error: error.message });
         console.error('[正文提取错误]', error);
         return;
       }
       
       if (this.state.paragraphs.length === 0) {
-        this.updateStatus(this.t('status.noParagraphs'));
+        this.updateStatusKey('status.noParagraphs');
         return;
       }
 
@@ -922,47 +988,80 @@ if (!window.ClozeReadingApp) {
       try {
         config = await safeStorageGet(['apiProvider']);
       } catch (e) {
-        this.updateStatus(e.message || this.t('status.contextInvalid'));
+        if (e.message) {
+          this.updateStatus(e.message);
+        } else {
+          this.updateStatusKey('status.contextInvalid');
+        }
         return;
       }
       const apiProvider = config.apiProvider || 'ollama';
       const providerName = getProviderName(apiProvider);
-      for (let i = 0; i < this.state.paragraphs.length; i++) {
-        const p = this.state.paragraphs[i];
-        p.status = 'processing';
-        
-        this.updateStatus(this.t('status.generating', {
-          provider: providerName,
-          current: i + 1,
-          total: this.state.paragraphs.length
-        }), {
-          current: i,
-          total: this.state.paragraphs.length
+      // 一次性批量调用 LLM 处理所有段落
+      this.updateStatusKey('status.generating', {
+        provider: providerName,
+        current: 0,
+        total: this.state.paragraphs.length
+      }, {
+        current: 0,
+        total: this.state.paragraphs.length
+      });
+
+      try {
+        const response = await safeSendMessage({
+          type: 'GENERATE_CLOZE_BATCH',
+          paragraphs: this.state.paragraphs.map(p => ({ id: p.id, text: p.text })),
+          model: this.state.model
         });
 
-        try {
-          const response = await safeSendMessage({
-            type: 'GENERATE_CLOZE',
-            paragraph: { id: p.id, text: p.text },
-            model: this.state.model
-          });
+        if (response.success && response.data) {
+          // 按段落ID处理批量结果
+          for (let i = 0; i < this.state.paragraphs.length; i++) {
+            const p = this.state.paragraphs[i];
+            const paragraphResult = response.data[p.id];
 
-          if (response.success && response.data.clozes && response.data.clozes.length > 0) {
-            this.applyClozeToParagraph(p, response.data.clozes);
-            this.state.stats.success++;
+            this.updateStatusKey('status.generating', {
+              provider: providerName,
+              current: i + 1,
+              total: this.state.paragraphs.length
+            }, {
+              current: i,
+              total: this.state.paragraphs.length
+            });
+
+            if (paragraphResult && paragraphResult.clozes && paragraphResult.clozes.length > 0) {
+              this.applyClozeToParagraph(p, paragraphResult.clozes);
+              this.state.stats.success++;
+            }
+
+            this.state.stats.done++;
+            p.status = 'done';
           }
-        } catch (err) {
-          // 静默处理错误，继续处理下一个段落
+        } else {
+          // 批量调用失败，标记所有段落为失败
+          for (const p of this.state.paragraphs) {
+            this.state.stats.done++;
+            p.status = 'done';
+          }
         }
-        
-        this.state.stats.done++;
-        p.status = 'done';
+      } catch (err) {
+        debugError('批量调用失败:', err);
+        // 批量调用失败，标记所有段落为失败
+        for (const p of this.state.paragraphs) {
+          this.state.stats.done++;
+          p.status = 'done';
+        }
       }
       
-      this.updateStatus(this.t('status.generatedSummary', {
+      const end = performance.now();
+      const durationMs = end - (this.state.generationStartTime || end);
+      const seconds = (durationMs / 1000).toFixed(1);
+
+      this.updateStatusKey('status.generatedSummary', {
         success: this.state.stats.success,
-        total: this.state.stats.total
-      }), {
+        total: this.state.stats.total,
+        seconds
+      }, {
         current: this.state.stats.total,
         total: this.state.stats.total
       });
@@ -1117,16 +1216,24 @@ if (!window.ClozeReadingApp) {
       try {
         settings = await safeStorageGet(['apiProvider', 'ollamaBaseUrl', 'ollamaModel', 'googleApiKey', 'googleModel', 'dashscopeApiKey', 'dashscopeModel', 'language']);
       } catch (e) {
-        this.updateStatus(e.message || this.t('status.contextInvalid'));
-      return;
-    }
+        if (e.message) {
+          this.updateStatus(e.message);
+        } else {
+          this.updateStatusKey('status.contextInvalid');
+        }
+        return;
+      }
       
       const apiProvider = settings.apiProvider || 'ollama';
       shadow.getElementById('cr-api-provider').value = apiProvider;
-      const lang = settings.language || this.state.language || 'zh';
-      this.state.language = lang;
+      
+      // 保持当前语言设置，不从存储中覆盖（维持现状）
+      // 如果当前 state.language 没有值，才从存储中读取
+      if (!this.state.language) {
+        this.state.language = settings.language || 'zh';
+      }
       const langSelect = shadow.getElementById('cr-language');
-      if (langSelect) langSelect.value = lang;
+      if (langSelect) langSelect.value = this.state.language;
       
       // 更新可见性
       shadow.getElementById('cr-ollama-config').style.display = 'none';
@@ -1183,7 +1290,7 @@ if (!window.ClozeReadingApp) {
       
       const config = configMap[apiProvider];
       if (!config) {
-        this.updateStatus(this.t('status.unknownProvider'));
+        this.updateStatusKey('status.unknownProvider');
         return;
       }
       
@@ -1210,7 +1317,7 @@ if (!window.ClozeReadingApp) {
       try {
         await safeStorageSet(settings);
         this.state.model = getModelFromConfig(settings, apiProvider);
-        this.updateStatus(this.t('status.settingsSaved'));
+        this.updateStatusKey('status.settingsSaved');
         setTimeout(() => {
           shadow.getElementById('cr-settings').style.display = 'none';
         }, 1000);
@@ -1225,12 +1332,26 @@ if (!window.ClozeReadingApp) {
 if (window.ClozeReadingApp) {
   const existingPanel = document.getElementById('cr-floating-panel');
   if (!existingPanel) {
+    // 面板不存在，初始化
+    debugLog('[启动] 面板不存在，初始化新面板');
     window.ClozeReadingApp.init();
   } else {
     // 面板已存在，显示它并恢复状态
+    debugLog('[启动] 面板已存在，显示并恢复状态');
     existingPanel.style.display = 'block';
+    existingPanel.style.visibility = 'visible';
+    existingPanel.style.opacity = '1';
+    
     const shadow = existingPanel.shadowRoot;
-    if (shadow) {
+    if (!shadow) {
+      // 如果 shadowRoot 不存在，重新初始化
+      debugWarn('[启动] 面板存在但 shadowRoot 丢失，重新初始化');
+      existingPanel.remove();
+      window.ClozeReadingApp.init();
+    } else {
+      // 确保应用语言设置
+      window.ClozeReadingApp.applyLanguage(shadow);
+      
       // 检查是否有已生成的题目（通过检查页面中是否有 select.cr-select）
       const hasClozes = document.querySelectorAll('select.cr-select').length > 0;
       if (hasClozes) {
@@ -1244,7 +1365,7 @@ if (window.ClozeReadingApp) {
           btnSubmit.disabled = false;
         }
         if (btnReset) btnReset.style.display = 'inline-block';
-        window.ClozeReadingApp.updateStatus(window.ClozeReadingApp.t('status.canContinue'));
+        window.ClozeReadingApp.updateStatusKey('status.canContinue');
       } else {
         // 没有题目，显示生成按钮
         const btnGenerate = shadow.getElementById('btn-generate');
@@ -1253,8 +1374,7 @@ if (window.ClozeReadingApp) {
         if (btnGenerate) btnGenerate.style.display = 'inline-block';
         if (btnSubmit) btnSubmit.style.display = 'none';
         if (btnReset) btnReset.style.display = 'none';
-        window.ClozeReadingApp.applyLanguage(shadow);
-        window.ClozeReadingApp.updateStatus(window.ClozeReadingApp.state.language === 'en' ? 'Ready' : '准备就绪');
+        window.ClozeReadingApp.updateStatusKey('status.statusReady');
       }
     }
   }

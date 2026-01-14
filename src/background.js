@@ -12,14 +12,14 @@ const DEFAULT_SETTINGS = {
 };
 
 // 日志工具：检查是否是开发版本
-// 如果版本号包含 -dev, -test, -beta 等后缀，则认为是开发版本，会打印日志
-// 正式版本（如 1.0.0）不会打印日志
+// 如果扩展名称（name）包含 -debug, -dev, -test, -beta 等后缀，则认为是开发版本，会打印日志
+// 正式版本（name 为 "cloze-reading"）不会打印日志
 function isDevVersion() {
   try {
     const manifest = chrome.runtime.getManifest();
-    const version = manifest.version || '';
-    // 检查版本号是否包含开发标识
-    return /-(dev|test|beta|alpha|debug)/i.test(version);
+    const name = manifest.name || '';
+    // 检查扩展名称是否包含开发标识
+    return /-(dev|test|beta|alpha|debug)/i.test(name);
   } catch (e) {
     // 如果无法获取 manifest，默认认为是开发版本（安全起见）
     return true;
@@ -102,7 +102,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.type === 'GENERATE_CLOZE') {
     handleGenerateCloze(request, sender.tab?.id, sendResponse);
-    return true; 
+    return true;
+  }
+
+  if (request.type === 'GENERATE_CLOZE_BATCH') {
+    handleGenerateClozeBatch(request, sender.tab?.id, sendResponse);
+    return true;
   }
 });
 
@@ -168,10 +173,75 @@ function logToConsole(tabId, level, ...args) {
   }).catch(() => {}); // 忽略错误（可能页面已关闭）
 }
 
+// 批量处理生成请求（一次性处理多个段落）
+async function handleGenerateClozeBatch({ paragraphs }, tabId, sendResponse) {
+  const stored = await chrome.storage.sync.get(['apiProvider', 'provider', 'ollamaBaseUrl', 'ollamaModel', 'dashscopeApiKey', 'dashscopeModel', 'googleApiKey', 'googleModel']);
+  const provider = stored.apiProvider || stored.provider || 'ollama';
+
+  logToConsole(tabId, 'log', `[批量生成] 开始处理 ${paragraphs.length} 个段落，Provider: ${provider}`);
+
+  const systemPrompt = buildSystemPrompt();
+  const userPrompt = buildBatchUserPrompt(paragraphs);
+
+  logToConsole(tabId, 'log', `[System Prompt]:`, systemPrompt);
+  logToConsole(tabId, 'log', `[User Prompt]:`, userPrompt);
+
+  try {
+    let rawContent = "";
+
+    logToConsole(tabId, 'log', `[API 调用] 开始调用 ${provider}...`);
+
+    if (provider === 'dashscope') {
+      rawContent = await callDashScope(stored, systemPrompt, userPrompt);
+    } else if (provider === 'google') {
+      rawContent = await callGoogle(stored, systemPrompt, userPrompt);
+    } else {
+      rawContent = await callOllama(stored, systemPrompt, userPrompt);
+    }
+
+    logToConsole(tabId, 'log', `[LLM 输出]:`, rawContent);
+
+    const batchResult = parseBatchLLMResponse(rawContent);
+
+    logToConsole(tabId, 'log', `[批量解析结果] 成功解析 ${batchResult.items.length} 个段落的题目`);
+
+    // 按段落ID组织结果，处理词数限制
+    const resultsById = {};
+    for (const item of batchResult.items) {
+      const paragraph = paragraphs.find(p => p.id === item.id);
+      if (!paragraph) {
+        logToConsole(tabId, 'warn', `[警告] 找不到段落 ${item.id}`);
+        continue;
+      }
+
+      let clozes = item.clozes || [];
+
+      // 如果段落词数 <= 100，限制为只挖 1 个空
+      const wordCount = countWords(paragraph.text);
+      if (wordCount <= 100 && clozes.length > 1) {
+        clozes = clozes.slice(0, 1);
+        logToConsole(tabId, 'log', `[限制] 段落 ${item.id}，词数 <= 100，限制为 1 个挖空`);
+      }
+
+      logToConsole(tabId, 'log', `[段落 ${item.id}] 挖空数: ${clozes.length}`);
+
+      resultsById[item.id] = { clozes };
+    }
+
+    sendResponse({ success: true, data: resultsById });
+
+  } catch (error) {
+    debugError('Batch generation failed:', error);
+    logToConsole(tabId, 'error', `[批量错误]:`, error.message);
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+// 保留旧的单段处理函数（向后兼容）
 async function handleGenerateCloze({ paragraph }, tabId, sendResponse) {
   const stored = await chrome.storage.sync.get(['apiProvider', 'provider', 'ollamaBaseUrl', 'ollamaModel', 'dashscopeApiKey', 'dashscopeModel', 'googleApiKey', 'googleModel']);
   const provider = stored.apiProvider || stored.provider || 'ollama';
-  
+
   const { id, text } = paragraph;
   const systemPrompt = buildSystemPrompt();
   const userPrompt = buildUserPrompt(text);
@@ -184,9 +254,9 @@ async function handleGenerateCloze({ paragraph }, tabId, sendResponse) {
 
   try {
     let rawContent = "";
-    
+
     logToConsole(tabId, 'log', `[API 调用] 段落 ${id}，开始调用 ${provider}...`);
-    
+
     if (provider === 'dashscope') {
       rawContent = await callDashScope(stored, systemPrompt, userPrompt);
     } else if (provider === 'google') {
@@ -194,21 +264,21 @@ async function handleGenerateCloze({ paragraph }, tabId, sendResponse) {
     } else {
       rawContent = await callOllama(stored, systemPrompt, userPrompt);
     }
-    
+
     logToConsole(tabId, 'log', `[LLM 输出] 段落 ${id}:`, rawContent);
-    
+
     const result = parseLLMResponse(rawContent);
-    
+
     logToConsole(tabId, 'log', `[解析结果] 段落 ${id}，原始挖空数: ${result.clozes.length}`);
-    
+
     // 如果段落词数 <= 100，限制为只挖 1 个空
     if (wordCount <= 100 && result.clozes.length > 1) {
       result.clozes = result.clozes.slice(0, 1);
       logToConsole(tabId, 'log', `[限制] 段落 ${id}，词数 <= 100，限制为 1 个挖空`);
     }
-    
+
     logToConsole(tabId, 'log', `[最终结果] 段落 ${id}，挖空数: ${result.clozes.length}`, result.clozes);
-    
+
     sendResponse({ success: true, id, data: result });
 
   } catch (error) {
@@ -321,7 +391,10 @@ async function callGoogle(settings, systemPrompt, userPrompt) {
 // 5. Prompt 构建 - 分离系统提示词和用户输入
 function buildSystemPrompt() {
   const parts = [
-    '你是一个专业的阅读理解出题老师。请针对用户提供的文本制作"完形填空"。',
+    '你是一个专业的阅读理解出题老师。请针对用户提供的多个段落制作"完形填空"。',
+    '',
+    '**输入格式说明**:',
+    '用户会提供一个 JSON 对象，包含多个段落，每个段落有唯一 id 和 text 字段。',
     '',
     '**要求**:',
     '1. **用户需要理解上下文才可以得出答案**：',
@@ -356,14 +429,20 @@ function buildSystemPrompt() {
     '**选项顺序要求：正确答案在 options 数组中的位置必须是随机的（可以是第1、2、3或4个位置），不要总是放在固定位置。**',
     '格式如下：',
     '{',
-    '  "clozes": [',
+    '  "items": [',
     '    {',
-    '      "target": "挖空词",',
-    '      "options": ["正确词", "干扰1", "干扰2", "干扰3"],',
-    '      "answer": "正确词",',
-    '      "analysis": "解析..."',
+    '      "id": "段落id",',
+    '      "clozes": [',
+    '        {',
+    '          "target": "挖空词",',
+    '          "options": ["正确词", "干扰1", "干扰2", "干扰3"],',
+    '          "answer": "正确词",',
+    '          "analysis": "解析..."',
+    '        }',
+    '        // 注意：正确答案的位置要随机，可以是 options 数组的任意位置',
+    '      ]',
     '    }',
-    '    // 注意：正确答案的位置要随机，可以是 options 数组的任意位置',
+    '    // 每个段落对应一个 item，按输入顺序或 id 对应',
     '  ]',
     '}'
   ];
@@ -372,6 +451,17 @@ function buildSystemPrompt() {
 
 function buildUserPrompt(text) {
   return text;
+}
+
+// 批量用户提示词构建（一次性发送多个段落）
+function buildBatchUserPrompt(paragraphs) {
+  const paragraphsJson = JSON.stringify({
+    paragraphs: paragraphs.map(p => ({ id: p.id, text: p.text }))
+  }, null, 2);
+
+  return `下方是若干段落，每个段落有唯一 id。请按系统说明，为每个段落生成 cloze 题目，并按 id 对应输出 JSON。
+
+${paragraphsJson}`;
 }
 
 // 6. 鲁棒的 JSON 解析器
@@ -433,4 +523,73 @@ function parseLLMResponse(content) {
   }
 
   return result || { clozes: [] };
+}
+
+// 批量解析 LLM 响应
+function parseBatchLLMResponse(content) {
+  let jsonStr = content.trim();
+  let result = null;
+
+  try {
+    result = JSON.parse(jsonStr);
+  } catch (e) {
+    jsonStr = jsonStr.replace(/^```json\s*/, '').replace(/^```\s*/, '').replace(/\s*```$/, '');
+    try {
+      result = JSON.parse(jsonStr);
+    } catch (e2) {
+      const match = content.match(/\{\s*"items"\s*:\s*\[[\s\S]*?\]\s*\}/);
+      if (match) {
+        try {
+          result = JSON.parse(match[0]);
+        } catch (e3) {
+          return { items: [] };
+        }
+      } else {
+        return { items: [] };
+      }
+    }
+  }
+
+  // 后处理：清理和验证
+  if (result && result.items && Array.isArray(result.items)) {
+    result.items = result.items.map(item => {
+      if (!item.id || !item.clozes) {
+        return { id: item.id || 'unknown', clozes: [] };
+      }
+
+      // 确保最多只保留 2 个挖空
+      if (item.clozes.length > 2) {
+        item.clozes = item.clozes.slice(0, 2);
+      }
+
+      // 过滤掉包含占位符的选项和 target
+      item.clozes = item.clozes.filter(cloze => {
+        const targetStr = String(cloze.target || '').trim();
+        if (targetStr === '' || targetStr.includes('___') || targetStr === '空白' || targetStr === '空') {
+          return false;
+        }
+
+        if (!cloze.options || !Array.isArray(cloze.options)) {
+          return false;
+        }
+
+        const validOptions = cloze.options.filter(opt => {
+          if (!opt || typeof opt !== 'string') return false;
+          const cleanOpt = opt.trim();
+          return cleanOpt !== '' && !cleanOpt.includes('___') && cleanOpt !== '空白' && cleanOpt !== '空';
+        });
+
+        if (validOptions.length < 4 || !cloze.answer || !validOptions.includes(cloze.answer)) {
+          return false;
+        }
+
+        cloze.options = validOptions.slice(0, 4);
+        return true;
+      });
+
+      return item;
+    });
+  }
+
+  return result || { items: [] };
 }
