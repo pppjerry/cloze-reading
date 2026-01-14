@@ -997,59 +997,79 @@ if (!window.ClozeReadingApp) {
       }
       const apiProvider = config.apiProvider || 'ollama';
       const providerName = getProviderName(apiProvider);
-      // 一次性批量调用 LLM 处理所有段落
-      this.updateStatusKey('status.generating', {
-        provider: providerName,
-        current: 0,
-        total: this.state.paragraphs.length
-      }, {
-        current: 0,
-        total: this.state.paragraphs.length
-      });
+      const batchSize = 10; // 每批处理的段落数量
+      const totalParagraphs = this.state.paragraphs.length;
+      
+      // 将段落分批处理
+      const batches = [];
+      for (let i = 0; i < totalParagraphs; i += batchSize) {
+        batches.push(this.state.paragraphs.slice(i, i + batchSize));
+      }
 
       try {
-        const response = await safeSendMessage({
-          type: 'GENERATE_CLOZE_BATCH',
-          paragraphs: this.state.paragraphs.map(p => ({ id: p.id, text: p.text })),
-          model: this.state.model
-        });
+        // 逐批处理
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+          const batch = batches[batchIndex];
+          const batchStartIndex = batchIndex * batchSize;
+          
+          // 更新状态：显示当前批次进度
+          this.updateStatusKey('status.generating', {
+            provider: providerName,
+            current: batchStartIndex + 1,
+            total: totalParagraphs
+          }, {
+            current: batchStartIndex,
+            total: totalParagraphs
+          });
 
-        if (response.success && response.data) {
-          // 按段落ID处理批量结果
-          for (let i = 0; i < this.state.paragraphs.length; i++) {
-            const p = this.state.paragraphs[i];
-            const paragraphResult = response.data[p.id];
+          // 调用批量 API 处理当前批次
+          const response = await safeSendMessage({
+            type: 'GENERATE_CLOZE_BATCH',
+            paragraphs: batch.map(p => ({ id: p.id, text: p.text })),
+            model: this.state.model
+          });
 
-            this.updateStatusKey('status.generating', {
-              provider: providerName,
-              current: i + 1,
-              total: this.state.paragraphs.length
-            }, {
-              current: i,
-              total: this.state.paragraphs.length
-            });
+          if (response.success && response.data) {
+            // 处理当前批次的结果
+            for (let i = 0; i < batch.length; i++) {
+              const p = batch[i];
+              const paragraphResult = response.data[p.id];
+              const globalIndex = batchStartIndex + i;
 
-            if (paragraphResult && paragraphResult.clozes && paragraphResult.clozes.length > 0) {
-              this.applyClozeToParagraph(p, paragraphResult.clozes);
-              this.state.stats.success++;
+              // 更新进度
+              this.updateStatusKey('status.generating', {
+                provider: providerName,
+                current: globalIndex + 1,
+                total: totalParagraphs
+              }, {
+                current: globalIndex,
+                total: totalParagraphs
+              });
+
+              if (paragraphResult && paragraphResult.clozes && paragraphResult.clozes.length > 0) {
+                this.applyClozeToParagraph(p, paragraphResult.clozes);
+                this.state.stats.success++;
+              }
+
+              this.state.stats.done++;
+              p.status = 'done';
             }
-
-            this.state.stats.done++;
-            p.status = 'done';
-          }
-        } else {
-          // 批量调用失败，标记所有段落为失败
-          for (const p of this.state.paragraphs) {
-            this.state.stats.done++;
-            p.status = 'done';
+          } else {
+            // 当前批次失败，标记该批次所有段落为失败
+            for (const p of batch) {
+              this.state.stats.done++;
+              p.status = 'done';
+            }
           }
         }
       } catch (err) {
         debugError('批量调用失败:', err);
-        // 批量调用失败，标记所有段落为失败
+        // 标记所有未处理的段落为失败
         for (const p of this.state.paragraphs) {
-          this.state.stats.done++;
-          p.status = 'done';
+          if (p.status !== 'done') {
+            this.state.stats.done++;
+            p.status = 'done';
+          }
         }
       }
       

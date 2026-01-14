@@ -10,8 +10,18 @@
     "https://generativelanguage.googleapis.com/*",
     "https://dashscope.aliyuncs.com/*"
   ],
+  "icons": {
+    "16": "src/cloze-reading-logo.png",
+    "48": "src/cloze-reading-logo.png",
+    "128": "src/cloze-reading-logo.png"
+  },
   "action": {
-    "default_title": "cloze-reading"
+    "default_title": "cloze-reading",
+    "default_icon": {
+      "16": "src/cloze-reading-logo.png",
+      "48": "src/cloze-reading-logo.png",
+      "128": "src/cloze-reading-logo.png"
+    }
   },
   "background": {
     "service_worker": "src/background.js",
