@@ -835,7 +835,7 @@ if (!window.ClozeReadingApp) {
           const originalText = originalP.innerText.trim();
           // 简单匹配：文本相同或包含关系
           if (originalText === text || originalText.includes(text) || text.includes(originalText)) {
-            const id = `cr-p-${Date.now()}-${idCounter++}`;
+            const id = `cr-p-${idCounter++}`;
             originalP.setAttribute('data-cr-id', id);
             processedElements.add(originalP);
             
