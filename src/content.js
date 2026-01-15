@@ -833,8 +833,23 @@ if (!window.ClozeReadingApp) {
           if (!shouldProcessElement(originalP)) continue;
           
           const originalText = originalP.innerText.trim();
-          // 简单匹配：文本相同或包含关系
-          if (originalText === text || originalText.includes(text) || text.includes(originalText)) {
+          
+          // 关键修复：先检查 originalText 不为空，避免空字符串匹配
+          if (!originalText || originalText.length < 10) continue;
+          
+          // 改进的匹配逻辑：避免空字符串匹配
+          // 只有当 originalText 和 text 都有实际内容时才进行匹配
+          const isExactMatch = originalText === text;
+          const isOriginalContainsText = originalText.length >= text.length && originalText.includes(text);
+          const isTextContainsOriginal = text.length >= originalText.length && text.includes(originalText);
+          
+          if (isExactMatch || isOriginalContainsText || isTextContainsOriginal) {
+            // 再次验证：确保匹配到的段落文本不为空且符合要求
+            if (originalText.length < 10 || countWords(originalText) < 15) {
+              debugWarn(`[正文提取] 段落 ${index + 1} 匹配到但文本太短，跳过:`, originalText.substring(0, 30));
+              continue;
+            }
+            
             const id = `cr-p-${idCounter++}`;
             originalP.setAttribute('data-cr-id', id);
             processedElements.add(originalP);
