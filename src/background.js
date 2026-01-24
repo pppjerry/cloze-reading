@@ -449,7 +449,17 @@ function buildBatchUserPrompt(paragraphs) {
 ${paragraphsJson}`;
 }
 
-// 6. 鲁棒的 JSON 解析器
+// 6. Fisher-Yates 洗牌算法，随机打乱数组
+function shuffleArray(array) {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+// 7. 鲁棒的 JSON 解析器
 function parseLLMResponse(content) {
   let jsonStr = content.trim();
   let result = null;
@@ -502,7 +512,8 @@ function parseLLMResponse(content) {
         return false;
       }
 
-      cloze.options = validOptions.slice(0, 4);
+      // 随机打乱选项顺序，避免答案总是在固定位置
+      cloze.options = shuffleArray(validOptions.slice(0, 4));
       return true;
       });
   }
@@ -568,7 +579,8 @@ function parseBatchLLMResponse(content) {
           return false;
         }
 
-        cloze.options = validOptions.slice(0, 4);
+        // 随机打乱选项顺序，避免答案总是在固定位置
+        cloze.options = shuffleArray(validOptions.slice(0, 4));
         return true;
       });
 
