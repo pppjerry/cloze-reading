@@ -46,44 +46,29 @@ function debugError(...args) {
   console.error(...args);
 }
 
-// 1. 监听插件图标点击，注入 content.js
+// 1. 监听插件图标点击，切换面板显示
+// 注意：content.js 已通过 manifest.json content_scripts 自动注入
 chrome.action.onClicked.addListener((tab) => {
   if (!tab.id || !tab.url) return;
   
-  // 检查是否为特殊页面（不允许脚本注入）
+  // 检查是否为特殊页面
   try {
     const url = new URL(tab.url);
     const protocol = url.protocol;
     
-    // 跳过 chrome://, edge://, about:, moz-extension:// 等特殊协议
     if (protocol === 'chrome:' || protocol === 'edge:' || protocol === 'about:' || protocol === 'moz-extension:') {
-      debugWarn('Cannot inject script into special page:', tab.url);
+      debugWarn('Cannot toggle panel on special page:', tab.url);
       return;
     }
-    } catch (e) {
-    // URL 解析失败，可能是特殊页面，跳过
-    debugWarn('Cannot parse URL, skipping injection:', tab.url);
+  } catch (e) {
+    debugWarn('Cannot parse URL:', tab.url);
     return;
   }
   
-  // 先注入 Readability.js，再注入 content.js
-  chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    files: ['src/vendor/readability/Readability.js']
-  }).then(() => {
-    // Readability.js 注入成功，再注入 content.js
-    return chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ['src/content.js']
-    });
-  }).catch(err => {
-    // 静默处理特殊页面的注入错误
-    if (err.message && err.message.includes('extensions gallery')) {
-      // 扩展程序管理页面，静默忽略
-      return;
-    }
-    // 其他错误正常记录
-    debugError('Script injection failed:', err);
+  // 发送消息给 content.js 切换面板显示
+  chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_PANEL' }).catch(err => {
+    // 如果 content.js 还没加载，静默忽略
+    debugLog('Toggle panel message failed (content script may not be ready):', err.message);
   });
 });
 

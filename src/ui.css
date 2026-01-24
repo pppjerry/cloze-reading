@@ -3,31 +3,165 @@
   display: block;
   z-index: 2147483647;
   position: fixed;
-  top: 20px;
-  right: 20px;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 /* Reset for Shadow DOM */
-.cr-panel * {
+.cr-sidebar * {
   box-sizing: border-box;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 /* =========================================
-   Floating Panel Styles
+   Sidebar Container
+   ========================================= */
+.cr-sidebar {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  font-size: 14px;
+}
+
+/* =========================================
+   Sidebar Toggle Button (Collapsed State)
+   ========================================= */
+.cr-sidebar-toggle {
+  width: 44px;
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  border-radius: 12px 0 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-right: none;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 4px;
+  cursor: grab;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+}
+
+.cr-sidebar-toggle:active {
+  cursor: grabbing;
+}
+
+.cr-sidebar-toggle:hover {
+  width: 48px;
+  background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+}
+
+.cr-sidebar-toggle .cr-toggle-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  border-radius: 8px;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.cr-sidebar-toggle:hover .cr-toggle-icon {
+  transform: scale(1.1);
+  background: rgba(56, 189, 248, 0.2);
+}
+
+.cr-sidebar-toggle .cr-toggle-text {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  letter-spacing: 2px;
+  padding: 8px 0;
+  transition: color 0.2s;
+}
+
+.cr-sidebar-toggle:hover .cr-toggle-text {
+  color: #e2e8f0;
+}
+
+/* Quick Action Buttons on Toggle Bar */
+.cr-quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 4px;
+}
+
+.cr-quick-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+  color: #94a3b8;
+}
+
+.cr-quick-btn:hover {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.3);
+  color: #38bdf8;
+  transform: scale(1.05);
+}
+
+.cr-quick-btn.active {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: #38bdf8;
+  color: #38bdf8;
+}
+
+.cr-quick-btn[title]:hover::after {
+  content: attr(title);
+  position: absolute;
+  right: 50px;
+  background: #1e293b;
+  color: #f1f5f9;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* =========================================
+   Expanded Panel Styles
    ========================================= */
 .cr-panel {
-  width: 320px;
-  max-height: 90vh;
-  background: #0f172a; /* Slate 900 */
+  width: 0;
+  max-height: 80vh;
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
   color: #f1f5f9;
-  border-radius: 12px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  border-radius: 12px 0 0 12px;
+  box-shadow: -8px 0 30px rgba(0, 0, 0, 0.2);
   border: 1px solid rgba(255, 255, 255, 0.1);
+  border-right: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  font-size: 14px;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cr-panel.expanded {
+  width: 320px;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .cr-header {
@@ -42,6 +176,13 @@
 .cr-logo {
   font-weight: 700;
   color: #38bdf8;
+  font-size: 14px;
+}
+
+.cr-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .cr-close {
@@ -50,9 +191,14 @@
   color: #94a3b8;
   cursor: pointer;
   font-size: 18px;
-  padding: 0;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.2s;
 }
-.cr-close:hover { color: #fff; }
+.cr-close:hover { 
+  color: #fff; 
+  background: rgba(255, 255, 255, 0.1);
+}
 
 .cr-body {
   padding: 16px;
@@ -60,6 +206,19 @@
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
+  flex: 1;
+}
+
+/* Panel Content Animation */
+.cr-panel .cr-body,
+.cr-panel .cr-header {
+  opacity: 0;
+  transition: opacity 0.2s ease 0.1s;
+}
+
+.cr-panel.expanded .cr-body,
+.cr-panel.expanded .cr-header {
+  opacity: 1;
 }
 
 .cr-settings {
@@ -75,6 +234,45 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* Drag Handle for Sidebar */
+.cr-drag-handle {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  margin: 4px 0 8px;
+  cursor: ns-resize;
+  transition: background 0.2s;
+}
+
+.cr-drag-handle:hover {
+  background: rgba(56, 189, 248, 0.3);
+}
+
+/* Sidebar Position Indicator */
+.cr-sidebar.dragging {
+  user-select: none;
+}
+
+.cr-sidebar.dragging .cr-sidebar-toggle {
+  background: linear-gradient(135deg, #1e3a5f 0%, #2d4a6f 100%);
+  cursor: grabbing;
+  box-shadow: -6px 0 30px rgba(56, 189, 248, 0.3);
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+/* Drag hint on toggle icon */
+.cr-sidebar-toggle .cr-toggle-icon::after {
+  content: '⋮⋮';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  color: rgba(148, 163, 184, 0.5);
+  letter-spacing: -2px;
 }
 
 .cr-status {

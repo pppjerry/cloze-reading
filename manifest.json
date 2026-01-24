@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "cloze-reading",
+  "name": "cloze-reading-dev",
   "version": "1.0.0",
-  "description": "基于LLM把网页正文变成“完型填空”，给阅读增加点摩擦，让你阅读更深刻",
+  "description": "基于LLM把网页正文变成「完型填空」，给阅读增加点摩擦，让你阅读更深刻",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
     "http://localhost/*",
@@ -27,6 +27,14 @@
     "service_worker": "src/background.js",
     "type": "module"
   },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["src/vendor/readability/Readability.js", "src/content.js"],
+      "css": ["src/ui.css"],
+      "run_at": "document_idle"
+    }
+  ],
   "web_accessible_resources": [
     {
       "resources": ["src/ui.css", "src/vendor/readability/Readability.js"],

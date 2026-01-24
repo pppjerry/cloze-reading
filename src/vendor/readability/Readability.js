@@ -24,7 +24,8 @@
  * @param {HTMLDocument} doc     The document to parse.
  * @param {Object}       options The options object.
  */
-function Readability(doc, options) {
+// 直接赋值给 window，确保在 content_scripts 环境中也能正确导出
+window.Readability = function Readability(doc, options) {
   // In some older versions, people passed a URI as the first argument. Cope:
   if (options && options.documentElement) {
     doc = options;
@@ -108,7 +109,7 @@ function Readability(doc, options) {
   }
 }
 
-Readability.prototype = {
+window.Readability.prototype = {
   FLAG_STRIP_UNLIKELYS: 0x1,
   FLAG_WEIGHT_CLASSES: 0x2,
   FLAG_CLEAN_CONDITIONALLY: 0x4,
@@ -2808,10 +2809,6 @@ Readability.prototype = {
 if (typeof module === "object") {
   /* eslint-disable-next-line no-redeclare */
   /* global module */
-  module.exports = Readability;
+  module.exports = window.Readability;
 }
-
-// 浏览器环境：直接定义全局变量，简化集成
-if (typeof window !== "undefined") {
-  window.Readability = Readability;
-}
+// window.Readability 已在函数定义时直接赋值，无需重复导出

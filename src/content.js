@@ -245,6 +245,17 @@ if (!window.ClozeReadingApp) {
       if (btnReset) btnReset.textContent = dict.btnReset;
       if (btnSave) btnSave.textContent = dict.settingsSave;
 
+      // 更新快捷按钮的 title
+      const quickGenerate = shadow.getElementById('quick-generate');
+      const quickSubmit = shadow.getElementById('quick-submit');
+      const quickReset = shadow.getElementById('quick-reset');
+      const quickSettings = shadow.getElementById('quick-settings');
+      
+      if (quickGenerate) quickGenerate.title = dict.btnGenerate;
+      if (quickSubmit) quickSubmit.title = dict.btnSubmit;
+      if (quickReset) quickReset.title = dict.btnReset;
+      if (quickSettings) quickSettings.title = lang === 'zh' ? '设置' : 'Settings';
+
       const apiLabel = shadow.querySelector('label[for="cr-api-provider-label"]');
       if (apiLabel) apiLabel.textContent = dict.labelApiProvider;
 
@@ -272,23 +283,112 @@ if (!window.ClozeReadingApp) {
         const panel = document.getElementById('cr-floating-panel');
         if (panel && panel.shadowRoot) {
           this.applyLanguage(panel.shadowRoot);
+          
+          // 自动检测正文并展开侧边栏
+          this.autoDetectAndShow(panel.shadowRoot);
         }
       } catch (e) {
         this.updateStatusKey('status.contextInvalid');
       }
+    },
+    
+    // 快速检测页面是否有正文内容
+    quickDetectContent() {
+      // 检测常见的文章容器
+      const articleSelectors = [
+        'article',
+        '[role="article"]',
+        '.article',
+        '.post',
+        '.content',
+        '.entry-content',
+        '.post-content',
+        '.article-content',
+        'main article',
+        '.markdown-body',
+        '.prose'
+      ];
+      
+      // 检查是否有文章容器
+      for (const selector of articleSelectors) {
+        const el = document.querySelector(selector);
+        if (el && el.textContent.trim().length > 500) {
+          return true;
+        }
+      }
+      
+      // 检查段落数量和文本长度
+      const paragraphs = document.querySelectorAll('p');
+      let validParagraphs = 0;
+      let totalTextLength = 0;
+      
+      for (const p of paragraphs) {
+        const text = p.textContent.trim();
+        // 排除太短的段落和导航/页脚区域
+        if (text.length > 50 && !p.closest('nav, footer, header, aside, .sidebar, .nav, .menu')) {
+          validParagraphs++;
+          totalTextLength += text.length;
+        }
+      }
+      
+      // 如果有至少 3 个有效段落且总文本长度超过 500 字符，认为有正文
+      return validParagraphs >= 3 && totalTextLength > 500;
+    },
+    
+    // 自动检测并展开侧边栏
+    async autoDetectAndShow(shadow) {
+      // 延迟检测，等待页面内容加载完成
+      setTimeout(() => {
+        const hasContent = this.quickDetectContent();
+        debugLog('[自动检测] 页面正文检测结果:', hasContent);
+        
+        if (hasContent) {
+          // 检测到正文，展开面板
+          const panel = shadow.getElementById('cr-panel-main');
+          const toggle = shadow.getElementById('cr-toggle');
+          
+          if (panel && toggle) {
+            panel.classList.add('expanded');
+            toggle.style.display = 'none';
+            debugLog('[自动检测] 检测到正文内容，自动展开侧边栏');
+          }
+        }
+      }, 800); // 延迟 800ms 检测，确保页面内容加载完成
     },
 
     setupMessageListener() {
       chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (request.type === 'LOG') {
           const { level = 'log', args = [] } = request;
-        if (level === 'error') {
-          debugError(...args);
-        } else if (level === 'warn') {
-          debugWarn(...args);
-        } else {
-          debugLog(...args);
+          if (level === 'error') {
+            debugError(...args);
+          } else if (level === 'warn') {
+            debugWarn(...args);
+          } else {
+            debugLog(...args);
+          }
         }
+        
+        // 处理切换面板消息（来自点击扩展图标）
+        if (request.type === 'TOGGLE_PANEL') {
+          const panel = document.getElementById('cr-floating-panel');
+          if (panel && panel.shadowRoot) {
+            const shadow = panel.shadowRoot;
+            const mainPanel = shadow.getElementById('cr-panel-main');
+            const toggle = shadow.getElementById('cr-toggle');
+            
+            // 切换展开/收起状态
+            if (mainPanel && mainPanel.classList.contains('expanded')) {
+              // 当前是展开状态，收起
+              mainPanel.classList.remove('expanded');
+              if (toggle) toggle.style.display = 'flex';
+            } else {
+              // 当前是收起状态，展开
+              if (mainPanel) mainPanel.classList.add('expanded');
+              if (toggle) toggle.style.display = 'none';
+            }
+          }
+          sendResponse({ success: true });
         }
       });
     },
@@ -305,186 +405,60 @@ if (!window.ClozeReadingApp) {
     },
 
     async loadReadability() {
-      // 如果已经加载，直接返回
-      if (typeof window.Readability !== 'undefined' && typeof window.Readability === 'function') {
-        debugLog('✓ Readability 已加载（通过 executeScript 注入）');
+      // Readability.js 现在通过 manifest.json content_scripts 直接注入
+      // 检查是否已经可用
+      if (typeof window.Readability === 'function') {
+        debugLog('✓ Readability 已通过 content_scripts 加载');
         return;
       }
       
-      // 检查全局 Readability（可能通过 executeScript 注入了但还没绑定到 window）
-      if (typeof Readability !== 'undefined' && typeof Readability === 'function') {
-        debugLog('发现全局 Readability，绑定到 window');
-        window.Readability = Readability;
-        return;
-      }
-
-      // 使用 script 标签方式加载（避免 CSP 限制）
-      return new Promise((resolve, reject) => {
-        // 检查是否已经有脚本标签在加载
-        const existingScript = document.querySelector('script[data-readability]');
-        if (existingScript) {
-            debugLog('Readability 脚本正在加载中，等待...');
-          let attempts = 0;
-          const maxAttempts = 60; // 增加到 3 秒
-          const checkReadability = () => {
-            attempts++;
-            if (typeof window.Readability === 'function') {
-                debugLog('✓ Readability 加载成功（已有脚本）');
-              resolve();
-            } else if (attempts >= maxAttempts) {
-              reject(new Error('Readability 加载超时：window.Readability 不是函数。请刷新页面后重试。'));
-            } else {
-              setTimeout(checkReadability, 50);
-            }
-          };
-          setTimeout(checkReadability, 50);
+      // 尝试从全局作用域获取（content_scripts 共享同一个环境）
+      try {
+        if (typeof Readability === 'function') {
+          debugLog('发现全局 Readability，绑定到 window');
+          window.Readability = Readability;
           return;
         }
-
-        const scriptUrl = chrome.runtime.getURL('src/vendor/readability/Readability.js');
-        debugLog('正在通过 script 标签加载 Readability.js:', scriptUrl);
+      } catch (e) {
+        // 忽略
+      }
+      
+      // 如果仍然不可用，等待一小段时间（可能还在加载中）
+      return new Promise((resolve, reject) => {
+        let attempts = 0;
+        const maxAttempts = 20; // 1秒
         
-        // 验证 URL 是否可访问
-        fetch(scriptUrl, { method: 'HEAD' }).then(response => {
-          if (!response.ok) {
-            throw new Error(`Readability.js 文件不存在或无法访问: HTTP ${response.status}`);
-          }
-          debugLog('✓ Readability.js 文件可访问');
-        }).catch(err => {
-          debugWarn('无法验证 Readability.js 文件，继续尝试加载:', err);
-        });
-
-        const script = document.createElement('script');
-        script.src = scriptUrl;
-        script.setAttribute('data-readability', 'true');
-        script.setAttribute('type', 'text/javascript');
-        script.setAttribute('crossorigin', 'anonymous');
-        
-        // 监听脚本执行错误（通过全局错误处理）
-        const originalOnerror = window.onerror;
-        let scriptError = null;
-        window.onerror = (message, source, lineno, colno, error) => {
-          if (source && source.includes('Readability.js')) {
-            scriptError = { message, source, lineno, colno, error };
-            console.error('Readability.js 执行错误:', scriptError);
-            return true; // 阻止默认错误处理
-          }
-          if (originalOnerror) {
-            return originalOnerror(message, source, lineno, colno, error);
-          }
-          return false;
-        };
-        
-        // 增加超时处理
-        const timeoutId = setTimeout(() => {
-          window.onerror = originalOnerror; // 恢复原始错误处理
-          script.remove();
-          reject(new Error('Readability.js 加载超时（超过 5 秒），请检查网络连接或刷新页面'));
-        }, 5000);
-        
-        script.onload = () => {
-          debugLog('Readability.js 脚本标签 onload 事件触发');
-          clearTimeout(timeoutId);
+        const checkReadability = () => {
+          attempts++;
           
-          // 恢复原始错误处理
-          window.onerror = originalOnerror;
-          
-          // 检查是否有执行错误
-          if (scriptError) {
-            reject(new Error(`Readability.js 执行时出错: ${scriptError.message} (行 ${scriptError.lineno})`));
-            return;
-          }
-          
-          // 尝试手动触发 Readability 的初始化
-          // 如果脚本执行了但 window.Readability 没设置，手动设置
-          try {
-            // 检查脚本是否真的执行了（通过检查是否有 Readability 构造函数）
-            if (typeof Readability !== 'undefined' && typeof Readability === 'function') {
-              debugLog('发现全局 Readability 函数，手动绑定到 window');
-              window.Readability = Readability;
-            }
-          } catch (e) {
-            debugWarn('检查全局 Readability 时出错:', e);
-          }
-          
-          // 立即检查一次
           if (typeof window.Readability === 'function') {
-            debugLog('✓ Readability 加载成功（立即检查）');
+            debugLog('✓ Readability 加载成功');
             resolve();
             return;
           }
           
-          // 使用轮询方式检查，最多等待 3 秒
-          let attempts = 0;
-          const maxAttempts = 60; // 60 * 50ms = 3秒
-          
-          const checkReadability = () => {
-            attempts++;
-            
-            // 每次检查时都尝试手动绑定（以防脚本延迟执行）
-            try {
-              if (typeof Readability !== 'undefined' && typeof Readability === 'function' && typeof window.Readability !== 'function') {
-                debugLog('尝试手动绑定 Readability 到 window');
-                window.Readability = Readability;
-              }
-            } catch (e) {
-              // 忽略错误，继续检查
-            }
-            
-            // 检查 window.Readability
-            if (typeof window.Readability === 'function') {
-                debugLog('✓ Readability 加载成功（通过 script 标签，轮询检查）');
+          // 尝试从全局获取
+          try {
+            if (typeof Readability === 'function') {
+              window.Readability = Readability;
+              debugLog('✓ Readability 从全局绑定成功');
               resolve();
               return;
             }
-            
-            if (attempts >= maxAttempts) {
-              // 最后一次尝试：直接检查脚本内容
-              console.error('Readability 加载失败详情:', {
-                windowReadability: typeof window.Readability,
-                windowReadabilityValue: window.Readability,
-                globalReadability: typeof Readability,
-                globalReadabilityValue: Readability,
-                scriptUrl: scriptUrl,
-                scriptReadyState: script.readyState,
-                scriptSrc: script.src,
-                scriptInDOM: document.contains(script),
-                windowType: typeof window,
-                hasWindow: !!window
-              });
-              
-              // 最后尝试：如果 Readability 存在但类型不对，尝试修复
-              if (typeof Readability !== 'undefined') {
-                debugWarn('Readability 存在但类型不是 function:', typeof Readability);
-              }
-              
-              reject(new Error('Readability 加载失败：window.Readability 不是函数。脚本可能未正确执行。请检查浏览器控制台是否有 JavaScript 错误，或刷新页面后重试。'));
-              return;
-            }
-            
-            setTimeout(checkReadability, 50);
-          };
+          } catch (e) {
+            // 忽略
+          }
           
-          // 延迟一下再开始检查，给脚本执行时间
-          setTimeout(checkReadability, 100);
+          if (attempts >= maxAttempts) {
+            debugWarn('[Readability] 加载超时，将使用兜底方案');
+            reject(new Error('Readability 未能加载，将使用兜底方案'));
+            return;
+          }
+          
+          setTimeout(checkReadability, 50);
         };
         
-        script.onerror = (error) => {
-          clearTimeout(timeoutId);
-          window.onerror = originalOnerror; // 恢复原始错误处理
-          console.error('Readability.js 脚本标签加载错误:', error);
-          console.error('错误详情:', {
-            scriptSrc: script.src,
-            scriptUrl: scriptUrl,
-            error: error,
-            scriptElement: script
-          });
-          reject(new Error('Readability.js 文件加载失败，请检查扩展文件是否完整。URL: ' + scriptUrl));
-        };
-        
-        // 添加到 head
-        (document.head || document.documentElement).appendChild(script);
-        debugLog('Readability.js script 标签已添加到 DOM');
+        checkReadability();
       });
     },
 
@@ -503,74 +477,90 @@ if (!window.ClozeReadingApp) {
       styleLink.href = chrome.runtime.getURL('src/ui.css');
       shadow.appendChild(styleLink);
 
-      const container = document.createElement('div');
-      container.className = 'cr-panel';
-      container.innerHTML = `
-        <div class="cr-header">
-          <span class="cr-logo">📝 Cloze Reading</span>
-          <div style="display:flex; gap:8px; align-items:center;">
-            <select id="cr-language" style="padding: 2px 6px; border-radius: 6px; background: rgba(15,23,42,0.8); border: 1px solid rgba(148,163,184,0.6); color: #e5e7eb; font-size: 12px;">
-              <option value="zh">中文</option>
-              <option value="en">EN</option>
-            </select>
-            <button class="cr-close" id="btn-settings" title="设置" style="font-size:16px;">⚙️</button>
-            <button class="cr-close" id="btn-close" title="关闭">×</button>
+      // 创建侧边栏容器
+      const sidebar = document.createElement('div');
+      sidebar.className = 'cr-sidebar';
+      sidebar.innerHTML = `
+        <!-- 侧边栏收起状态的按钮条 -->
+        <div class="cr-sidebar-toggle" id="cr-toggle">
+          <div class="cr-toggle-icon">📝</div>
+          <div class="cr-toggle-text">Cloze</div>
+          <div class="cr-quick-actions">
+            <button class="cr-quick-btn" id="quick-generate" title="开始生成">▶</button>
+            <button class="cr-quick-btn" id="quick-submit" title="提交答案" style="display:none">✓</button>
+            <button class="cr-quick-btn" id="quick-reset" title="恢复原文" style="display:none">↺</button>
+            <button class="cr-quick-btn" id="quick-settings" title="设置">⚙</button>
           </div>
         </div>
-        <div class="cr-body">
-          <div class="cr-status"></div>
-          <div class="cr-progress" style="display:none">
-            <div class="cr-bar"><div class="cr-bar-inner" style="width:0%"></div></div>
-            <span class="cr-count">0/0</span>
-          </div>
-          <div class="cr-actions">
-            <button id="btn-generate" class="cr-btn primary">开始生成</button>
-            <button id="btn-submit" class="cr-btn success" style="display:none" disabled>提交答案</button>
-            <button id="btn-reset" class="cr-btn warning" style="display:none">恢复原文</button>
-          </div>
-          <div id="cr-settings" class="cr-settings" style="display:none; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
-            <div style="margin-bottom: 10px;">
-              <label for="cr-api-provider-label" style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">API 提供者</label>
-              <select id="cr-api-provider" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px;">
-                <option value="ollama">Ollama (本地)</option>
-                <option value="google">Google AI Studio</option>
-                <option value="dashscope">阿里云通义千问</option>
+        
+        <!-- 展开的面板 -->
+        <div class="cr-panel" id="cr-panel-main">
+          <div class="cr-header">
+            <span class="cr-logo">📝 Cloze Reading</span>
+            <div class="cr-header-actions">
+              <select id="cr-language" style="padding: 2px 6px; border-radius: 6px; background: rgba(15,23,42,0.8); border: 1px solid rgba(148,163,184,0.6); color: #e5e7eb; font-size: 12px;">
+                <option value="zh">中文</option>
+                <option value="en">EN</option>
               </select>
+              <button class="cr-close" id="btn-settings" title="设置" style="font-size:16px;">⚙️</button>
+              <button class="cr-close" id="btn-collapse" title="收起">◀</button>
             </div>
-            
-            <!-- Ollama 配置 -->
-            <div id="cr-ollama-config" style="margin-bottom: 10px;">
-              <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">Ollama Base URL</label>
-              <input id="cr-ollama-url" type="text" placeholder="http://localhost:11434" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px; margin-bottom: 6px;" />
-              <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">模型名称</label>
-              <input id="cr-ollama-model" type="text" placeholder="qwen2.5:7b (示例: qwen2.5:7b, llama3:8b)" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px;" />
-              <div style="font-size: 11px; color: #64748b; margin-top: 4px;">格式: 模型名:版本 (如: qwen2.5:7b, llama3:8b)</div>
+          </div>
+          <div class="cr-body">
+            <div class="cr-status"></div>
+            <div class="cr-progress" style="display:none">
+              <div class="cr-bar"><div class="cr-bar-inner" style="width:0%"></div></div>
+              <span class="cr-count">0/0</span>
             </div>
+            <div class="cr-actions">
+              <button id="btn-generate" class="cr-btn primary">开始生成</button>
+              <button id="btn-submit" class="cr-btn success" style="display:none" disabled>提交答案</button>
+              <button id="btn-reset" class="cr-btn warning" style="display:none">恢复原文</button>
+            </div>
+            <div id="cr-settings" class="cr-settings" style="display:none; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
+              <div style="margin-bottom: 10px;">
+                <label for="cr-api-provider-label" style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">API 提供者</label>
+                <select id="cr-api-provider" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px;">
+                  <option value="ollama">Ollama (本地)</option>
+                  <option value="google">Google AI Studio</option>
+                  <option value="dashscope">阿里云通义千问</option>
+                </select>
+              </div>
+              
+              <!-- Ollama 配置 -->
+              <div id="cr-ollama-config" style="margin-bottom: 10px;">
+                <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">Ollama Base URL</label>
+                <input id="cr-ollama-url" type="text" placeholder="http://localhost:11434" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px; margin-bottom: 6px;" />
+                <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">模型名称</label>
+                <input id="cr-ollama-model" type="text" placeholder="qwen2.5:7b (示例: qwen2.5:7b, llama3:8b)" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px;" />
+                <div style="font-size: 11px; color: #64748b; margin-top: 4px;">格式: 模型名:版本 (如: qwen2.5:7b, llama3:8b)</div>
+              </div>
 
-            <!-- Google 配置 -->
-            <div id="cr-google-config" style="display: none; margin-bottom: 10px;">
-              <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">API Key</label>
-              <input id="cr-google-key" type="password" placeholder="输入 Google AI Studio API Key" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px; margin-bottom: 6px;" />
-              <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">模型名称</label>
-              <input id="cr-google-model" type="text" placeholder="gemini-2.5-flash (示例: gemini-2.5-flash, gemini-1.5-pro)" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px;" />
-              <div style="font-size: 11px; color: #64748b; margin-top: 4px;">格式: gemini-版本-类型 (如: gemini-2.5-flash, gemini-1.5-pro)</div>
-            </div>
+              <!-- Google 配置 -->
+              <div id="cr-google-config" style="display: none; margin-bottom: 10px;">
+                <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">API Key</label>
+                <input id="cr-google-key" type="password" placeholder="输入 Google AI Studio API Key" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px; margin-bottom: 6px;" />
+                <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">模型名称</label>
+                <input id="cr-google-model" type="text" placeholder="gemini-2.5-flash (示例: gemini-2.5-flash, gemini-1.5-pro)" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px;" />
+                <div style="font-size: 11px; color: #64748b; margin-top: 4px;">格式: gemini-版本-类型 (如: gemini-2.5-flash, gemini-1.5-pro)</div>
+              </div>
 
-            <!-- DashScope 配置 -->
-            <div id="cr-dashscope-config" style="display: none; margin-bottom: 10px;">
-              <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">API Key</label>
-              <input id="cr-dashscope-key" type="password" placeholder="sk-..." style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px; margin-bottom: 6px;" />
-              <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">模型名称</label>
-              <input id="cr-dashscope-model" type="text" placeholder="qwen-plus (示例: qwen-turbo, qwen-plus, qwen-max, qwen-long)" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px;" />
-              <div style="font-size: 11px; color: #64748b; margin-top: 4px;">格式: qwen-类型 (如: qwen-turbo, qwen-plus, qwen-max, qwen-long)</div>
-            </div>
+              <!-- DashScope 配置 -->
+              <div id="cr-dashscope-config" style="display: none; margin-bottom: 10px;">
+                <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">API Key</label>
+                <input id="cr-dashscope-key" type="password" placeholder="sk-..." style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px; margin-bottom: 6px;" />
+                <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px;">模型名称</label>
+                <input id="cr-dashscope-model" type="text" placeholder="qwen-plus (示例: qwen-turbo, qwen-plus, qwen-max, qwen-long)" style="width: 100%; padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #f1f5f9; font-size: 13px;" />
+                <div style="font-size: 11px; color: #64748b; margin-top: 4px;">格式: qwen-类型 (如: qwen-turbo, qwen-plus, qwen-max, qwen-long)</div>
+              </div>
 
-            <button id="btn-save-settings" class="cr-btn primary" style="width: 100%; margin-top: 8px;">保存设置</button>
+              <button id="btn-save-settings" class="cr-btn primary" style="width: 100%; margin-top: 8px;">保存设置</button>
+            </div>
           </div>
         </div>
       `;
 
-      shadow.appendChild(container);
+      shadow.appendChild(sidebar);
       
       // 确保面板可见
       div.style.display = 'block';
@@ -579,19 +569,68 @@ if (!window.ClozeReadingApp) {
       
       document.body.appendChild(div);
 
+      // 获取元素引用
+      const panel = shadow.getElementById('cr-panel-main');
+      const toggle = shadow.getElementById('cr-toggle');
       const btnGenerate = shadow.getElementById('btn-generate');
       const btnSubmit = shadow.getElementById('btn-submit');
       const btnReset = shadow.getElementById('btn-reset');
-      const btnClose = shadow.getElementById('btn-close');
+      const btnCollapse = shadow.getElementById('btn-collapse');
       const btnSettings = shadow.getElementById('btn-settings');
+      
+      // 快捷按钮
+      const quickGenerate = shadow.getElementById('quick-generate');
+      const quickSubmit = shadow.getElementById('quick-submit');
+      const quickReset = shadow.getElementById('quick-reset');
+      const quickSettings = shadow.getElementById('quick-settings');
 
+      // 展开/收起面板
+      const expandPanel = () => {
+        panel.classList.add('expanded');
+        toggle.style.display = 'none';
+      };
+      
+      const collapsePanel = () => {
+        panel.classList.remove('expanded');
+        toggle.style.display = 'flex';
+      };
+
+      // 点击切换栏展开面板
+      toggle.addEventListener('click', (e) => {
+        // 如果点击的是快捷按钮，不展开面板
+        if (e.target.closest('.cr-quick-btn')) return;
+        expandPanel();
+      });
+
+      // 收起按钮
+      btnCollapse.onclick = collapsePanel;
+
+      // 主按钮事件
       btnGenerate.onclick = () => this.startGeneration();
       btnSubmit.onclick = () => this.handleSubmit();
       btnReset.onclick = () => this.restoreOriginal();
       
-      btnClose.onclick = () => {
-        // 只隐藏面板，不删除，保留状态以便再次打开时继续
-        div.style.display = 'none';
+      // 快捷按钮事件
+      quickGenerate.onclick = (e) => {
+        e.stopPropagation();
+        this.startGeneration();
+      };
+      quickSubmit.onclick = (e) => {
+        e.stopPropagation();
+        this.handleSubmit();
+      };
+      quickReset.onclick = (e) => {
+        e.stopPropagation();
+        this.restoreOriginal();
+      };
+      quickSettings.onclick = (e) => {
+        e.stopPropagation();
+        expandPanel();
+        setTimeout(() => {
+          const settingsPanel = shadow.getElementById('cr-settings');
+          settingsPanel.style.display = 'block';
+          this.loadSettingsToPanel(shadow);
+        }, 100);
       };
 
       btnSettings.onclick = () => {
@@ -655,6 +694,116 @@ if (!window.ClozeReadingApp) {
 
       // 初始化状态文本
       this.updateStatusKey('status.statusReady');
+      
+      // 同步快捷按钮状态的辅助函数
+      this.syncQuickButtons = (showSubmit, showReset, showGenerate) => {
+        quickGenerate.style.display = showGenerate ? 'flex' : 'none';
+        quickSubmit.style.display = showSubmit ? 'flex' : 'none';
+        quickReset.style.display = showReset ? 'flex' : 'none';
+      };
+      
+      // ========== 拖拽功能 ==========
+      this.setupDrag(div, sidebar, toggle);
+    },
+    
+    // 设置拖拽功能
+    setupDrag(container, sidebar, toggle) {
+      let isDragging = false;
+      let startY = 0;
+      let startTop = 0;
+      
+      // 从 storage 恢复位置
+      safeStorageGet(['sidebarPosition']).then(config => {
+        if (config.sidebarPosition) {
+          container.style.top = config.sidebarPosition;
+          container.style.transform = 'translateY(0)';
+        }
+      }).catch(() => {});
+      
+      // 鼠标按下开始拖拽
+      const onMouseDown = (e) => {
+        // 只响应鼠标左键，且不是点击按钮
+        if (e.button !== 0) return;
+        if (e.target.closest('.cr-quick-btn')) return;
+        if (e.target.closest('button')) return;
+        
+        isDragging = true;
+        startY = e.clientY;
+        
+        // 获取当前位置
+        const rect = container.getBoundingClientRect();
+        startTop = rect.top;
+        
+        sidebar.classList.add('dragging');
+        e.preventDefault();
+      };
+      
+      // 鼠标移动
+      const onMouseMove = (e) => {
+        if (!isDragging) return;
+        
+        const deltaY = e.clientY - startY;
+        let newTop = startTop + deltaY;
+        
+        // 限制在视口范围内
+        const containerHeight = container.offsetHeight;
+        const viewportHeight = window.innerHeight;
+        const minTop = 10;
+        const maxTop = viewportHeight - containerHeight - 10;
+        
+        newTop = Math.max(minTop, Math.min(maxTop, newTop));
+        
+        container.style.top = `${newTop}px`;
+        container.style.transform = 'translateY(0)';
+      };
+      
+      // 鼠标松开结束拖拽
+      const onMouseUp = () => {
+        if (!isDragging) return;
+        
+        isDragging = false;
+        sidebar.classList.remove('dragging');
+        
+        // 保存位置到 storage
+        safeStorageSet({ sidebarPosition: container.style.top }).catch(() => {});
+      };
+      
+      // 绑定事件到 toggle
+      toggle.addEventListener('mousedown', onMouseDown);
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+      
+      // 触摸事件支持（移动端）
+      toggle.addEventListener('touchstart', (e) => {
+        if (e.target.closest('.cr-quick-btn')) return;
+        const touch = e.touches[0];
+        isDragging = true;
+        startY = touch.clientY;
+        const rect = container.getBoundingClientRect();
+        startTop = rect.top;
+        sidebar.classList.add('dragging');
+      }, { passive: true });
+      
+      document.addEventListener('touchmove', (e) => {
+        if (!isDragging) return;
+        const touch = e.touches[0];
+        const deltaY = touch.clientY - startY;
+        let newTop = startTop + deltaY;
+        
+        const containerHeight = container.offsetHeight;
+        const viewportHeight = window.innerHeight;
+        newTop = Math.max(10, Math.min(viewportHeight - containerHeight - 10, newTop));
+        
+        container.style.top = `${newTop}px`;
+        container.style.transform = 'translateY(0)';
+      }, { passive: true });
+      
+      document.addEventListener('touchend', () => {
+        if (!isDragging) return;
+        isDragging = false;
+        sidebar.classList.remove('dragging');
+        safeStorageSet({ sidebarPosition: container.style.top }).catch(() => {});
+      });
     },
 
     handleSubmit() {
@@ -697,6 +846,11 @@ if (!window.ClozeReadingApp) {
       this.updateStatusKey('status.score', { correct: correctCount, total: totalCount });
       shadow.getElementById('btn-submit').style.display = 'none';
       shadow.getElementById('btn-reset').style.display = 'inline-block';
+      
+      // 同步快捷按钮状态
+      if (this.syncQuickButtons) {
+        this.syncQuickButtons(false, true, false);
+      }
     },
 
     updateStatus(text, progress = null, meta = null) {
@@ -746,6 +900,7 @@ if (!window.ClozeReadingApp) {
       let idCounter = 0;
       const processedElements = new Set();
 
+      // 计算文本词数（中英文混合）
       function countWords(text) {
         const cleaned = text.replace(/[，。！？、；：""''（）【】《》\s]+/g, ' ');
         const chineseChars = (cleaned.match(/[\u4e00-\u9fa5]/g) || []).length;
@@ -753,121 +908,349 @@ if (!window.ClozeReadingApp) {
         return Math.ceil(chineseChars / 2) + englishWords;
       }
 
+      // 判断元素是否应该被处理
       function shouldProcessElement(el) {
-        if (el.offsetParent === null) return false;
+        if (!el || el.offsetParent === null) return false;
         if (el.closest('#cr-floating-panel')) return false;
         if (el.closest('pre') || el.closest('code')) return false;
         if (processedElements.has(el)) return false;
+        
         const tagName = el.tagName?.toLowerCase();
-        const className = el.className?.toLowerCase() || '';
-        const id = el.id?.toLowerCase() || '';
-        if (tagName === 'nav' || tagName === 'header' || tagName === 'footer' || 
-            className.includes('nav') || className.includes('sidebar') || 
-            className.includes('menu') || id.includes('nav') || id.includes('sidebar')) {
-          return false;
+        const className = (typeof el.className === 'string' ? el.className : '').toLowerCase();
+        const id = (el.id || '').toLowerCase();
+        
+        // 排除导航、侧边栏、页脚等非正文区域
+        const excludePatterns = ['nav', 'sidebar', 'menu', 'footer', 'header', 'comment', 'advertisement', 'ad-', 'related', 'recommend'];
+        for (const pattern of excludePatterns) {
+          if (tagName === pattern || className.includes(pattern) || id.includes(pattern)) {
+            return false;
+          }
         }
         return true;
       }
-
-      // 使用 Readability 算法提取正文（完全依赖，无兜底策略）
-      let readabilityParagraphs = [];
       
-      // 确保 Readability 已加载
-      if (typeof window.Readability === 'undefined' || typeof window.Readability !== 'function') {
-        await this.loadReadability();
-      }
-      
-      if (typeof window.Readability !== 'function') {
-        throw new Error('Readability 加载失败，无法识别正文内容');
-      }
-      
-      // 创建一个新的 document 来执行 Readability，避免修改原始页面
-      // 使用 document.implementation.createHTMLDocument 创建独立的 document
-      const clonedDoc = document.implementation.createHTMLDocument('Cloned Document');
-      clonedDoc.documentElement.innerHTML = document.documentElement.innerHTML;
-      
-      // 复制 body 内容
-      if (document.body && clonedDoc.body) {
-        clonedDoc.body.innerHTML = document.body.innerHTML;
-      }
-      
-      // 使用克隆的 document 来执行 Readability，这样不会修改原始页面
-      const reader = new window.Readability(clonedDoc, {
-        debug: false,
-        maxElemsToParse: 0,
-        nbTopCandidates: 5,
-        charThreshold: 500
-      });
-      
-      const article = reader.parse();
-      if (!article || !article.content) {
-        throw new Error('Readability 无法识别正文内容，请确认当前页面包含可识别的文章内容');
-      }
-      
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = article.content;
-      readabilityParagraphs = Array.from(tempDiv.querySelectorAll('p'));
-      debugLog(`[Readability] 提取到 ${readabilityParagraphs.length} 个段落`);
-      debugLog(`[Readability] 文章标题: ${article.title || '无'}`);
-      debugLog(`[Readability] 文章长度: ${article.length || 0} 字符`);
-      
-      if (readabilityParagraphs.length === 0) {
-        throw new Error('Readability 未提取到任何段落，无法生成题目');
+      // 判断段落文本是否有效
+      function isValidParagraph(text) {
+        if (!text || text.length < 15) return false;
+        // 需要包含中文标点或英文句号（或者足够长的纯文本）
+        const hasPunctuation = /[，。！？、；：,.!?;:]/.test(text);
+        const isLongEnough = text.length >= 50;
+        if (!hasPunctuation && !isLongEnough) return false;
+        // 词数至少 10（降低阈值）
+        if (countWords(text) < 10) return false;
+        return true;
       }
 
-      // 通过 Readability 结果，在原始 DOM 中找到对应段落
-      debugLog(`[正文提取] 开始匹配 Readability 提取的 ${readabilityParagraphs.length} 个段落到原始 DOM`);
-      const allOriginalPTags = document.querySelectorAll('p');
-      let matchedCount = 0;
+      // ========== 方案一：Readability 提取 ==========
+      let readabilitySuccess = false;
       
-      readabilityParagraphs.forEach((readabilityP, index) => {
-        const text = readabilityP.innerText.trim();
-        if (text.length < 10 || !/[，。！？]/.test(text)) return;
+      try {
+        // 确保 Readability 已加载
+        if (typeof window.Readability === 'undefined' || typeof window.Readability !== 'function') {
+          await this.loadReadability();
+        }
         
-        const wordCount = countWords(text);
-        if (wordCount < 15) return;
-        
-        // 在原始 DOM 中查找匹配的段落
-        for (const originalP of allOriginalPTags) {
-          if (processedElements.has(originalP)) continue;
-          if (!shouldProcessElement(originalP)) continue;
+        if (typeof window.Readability === 'function') {
+          // 创建克隆的 document 执行 Readability
+          const clonedDoc = document.implementation.createHTMLDocument('Cloned Document');
+          clonedDoc.documentElement.innerHTML = document.documentElement.innerHTML;
+          if (document.body && clonedDoc.body) {
+            clonedDoc.body.innerHTML = document.body.innerHTML;
+          }
           
-          const originalText = originalP.innerText.trim();
+          const reader = new window.Readability(clonedDoc, {
+            debug: false,
+            maxElemsToParse: 0,
+            nbTopCandidates: 5,
+            charThreshold: 500
+          });
           
-          // 关键修复：先检查 originalText 不为空，避免空字符串匹配
-          if (!originalText || originalText.length < 10) continue;
+          const article = reader.parse();
           
-          // 改进的匹配逻辑：避免空字符串匹配
-          // 只有当 originalText 和 text 都有实际内容时才进行匹配
-          const isExactMatch = originalText === text;
-          const isOriginalContainsText = originalText.length >= text.length && originalText.includes(text);
-          const isTextContainsOriginal = text.length >= originalText.length && text.includes(originalText);
-          
-          if (isExactMatch || isOriginalContainsText || isTextContainsOriginal) {
-            // 再次验证：确保匹配到的段落文本不为空且符合要求
-            if (originalText.length < 10 || countWords(originalText) < 15) {
-              debugWarn(`[正文提取] 段落 ${index + 1} 匹配到但文本太短，跳过:`, originalText.substring(0, 30));
-              continue;
+          if (article && article.content) {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = article.content;
+            const readabilityParagraphs = Array.from(tempDiv.querySelectorAll('p'));
+            
+            debugLog(`[Readability] 提取到 ${readabilityParagraphs.length} 个段落`);
+            debugLog(`[Readability] 文章标题: ${article.title || '无'}`);
+            debugLog(`[Readability] 文章长度: ${article.length || 0} 字符`);
+            
+            // 在原始 DOM 中匹配段落
+            const allOriginalPTags = document.querySelectorAll('p');
+            
+            for (const readabilityP of readabilityParagraphs) {
+              const text = readabilityP.innerText.trim();
+              if (!isValidParagraph(text)) continue;
+              
+              // 查找匹配的原始段落
+              for (const originalP of allOriginalPTags) {
+                if (processedElements.has(originalP)) continue;
+                if (!shouldProcessElement(originalP)) continue;
+                
+                const originalText = originalP.innerText.trim();
+                if (!originalText || originalText.length < 20) continue;
+                
+                // 匹配逻辑：精确匹配或包含关系
+                const isMatch = originalText === text || 
+                  (originalText.length >= text.length && originalText.includes(text)) ||
+                  (text.length >= originalText.length && text.includes(originalText));
+                
+                if (isMatch && isValidParagraph(originalText)) {
+                  const id = `cr-p-${idCounter++}`;
+                  originalP.setAttribute('data-cr-id', id);
+                  processedElements.add(originalP);
+                  paragraphs.push({
+                    id, element: originalP, originalHTML: originalP.innerHTML, text: originalText, status: 'pending'
+                  });
+                  break;
+                }
+              }
             }
             
-            const id = `cr-p-${idCounter++}`;
-            originalP.setAttribute('data-cr-id', id);
-            processedElements.add(originalP);
+            debugLog(`[Readability] 匹配完成: ${paragraphs.length} 个段落`);
             
-            paragraphs.push({
-              id, element: originalP, originalHTML: originalP.innerHTML, text: originalText, status: 'pending'
-            });
-            matchedCount++;
-            debugLog(`[正文提取] 段落 ${index + 1}/${readabilityParagraphs.length} 匹配成功:`, originalText.substring(0, 50) + '...');
-            break;
+            // 如果匹配到足够多的段落，认为成功
+            if (paragraphs.length >= 3) {
+              readabilitySuccess = true;
+            }
           }
         }
-      });
-      
-      debugLog(`[正文提取] Readability 匹配完成: ${matchedCount}/${readabilityParagraphs.length} 个段落成功匹配`);
-      
+      } catch (e) {
+        debugWarn('[Readability] 提取失败:', e.message);
+      }
+
+      // ========== 方案二：兜底方案 - 智能启发式提取 ==========
+      if (!readabilitySuccess || paragraphs.length < 3) {
+        debugLog('[兜底方案] Readability 效果不佳，启用智能启发式提取');
+        
+        // 重置（如果 Readability 部分成功但效果不好）
+        if (paragraphs.length > 0 && paragraphs.length < 3) {
+          paragraphs.length = 0;
+          processedElements.clear();
+          idCounter = 0;
+        }
+        
+        // 定义可能的文章容器选择器（按优先级排序）
+        // 包含常见网站和微信公众号等特殊网站的选择器
+        const containerSelectors = [
+          // 微信公众号
+          '#js_content',
+          '.rich_media_content',
+          '#img-content',
+          // 知乎
+          '.Post-RichText',
+          '.RichContent-inner',
+          // 微博
+          '.weibo-text',
+          // 头条/今日头条
+          '.article-content',
+          // 通用选择器
+          'article',
+          '[role="article"]',
+          'main article',
+          '.article',
+          '.post',
+          '.post-content',
+          '.article-content',
+          '.entry-content',
+          '.content',
+          '.markdown-body',
+          '.prose',
+          '.text',
+          '.body',
+          'main',
+          '#content',
+          '#main',
+          '.main',
+          '[class*="article"]',
+          '[class*="content"]',
+          '[class*="post"]',
+          // 更宽泛的选择器
+          '[id*="content"]',
+          '[id*="article"]'
+        ];
+        
+        // 段落标签选择器（不仅仅是 p 标签）
+        const paragraphSelectors = 'p, section, .paragraph, [class*="para"], div > span';
+        
+        let contentContainer = null;
+        let maxParagraphScore = 0;
+        
+        // 查找最佳内容容器
+        for (const selector of containerSelectors) {
+          try {
+            const containers = document.querySelectorAll(selector);
+            for (const container of containers) {
+              if (!shouldProcessElement(container)) continue;
+              
+              // 计算容器的"文章分数"，使用更广泛的段落选择器
+              const elements = container.querySelectorAll(paragraphSelectors);
+              let score = 0;
+              let validCount = 0;
+              
+              for (const el of elements) {
+                const text = el.innerText.trim();
+                if (isValidParagraph(text)) {
+                  validCount++;
+                  score += text.length;
+                }
+              }
+              
+              // 考虑有效段落数量和总文本长度
+              const finalScore = validCount * 100 + score;
+              
+              debugLog(`[兜底方案] 容器评分: ${selector} => ${finalScore} (${validCount} 段落)`);
+              
+              if (finalScore > maxParagraphScore) {
+                maxParagraphScore = finalScore;
+                contentContainer = container;
+              }
+            }
+          } catch (e) {
+            // 忽略选择器错误
+          }
+        }
+        
+        // 如果找到了内容容器，从中提取段落
+        if (contentContainer) {
+          debugLog('[兜底方案] 找到内容容器:', contentContainer.tagName, contentContainer.className);
+          
+          // 使用更广泛的段落选择器
+          const elementsInContainer = contentContainer.querySelectorAll(paragraphSelectors);
+          
+          for (const el of elementsInContainer) {
+            if (processedElements.has(el)) continue;
+            if (!shouldProcessElement(el)) continue;
+            
+            // 跳过包含其他段落元素的容器（避免重复）
+            if (el.querySelector('p, section')) continue;
+            
+            const text = el.innerText.trim();
+            if (!isValidParagraph(text)) continue;
+            
+            const id = `cr-p-${idCounter++}`;
+            el.setAttribute('data-cr-id', id);
+            processedElements.add(el);
+            paragraphs.push({
+              id, element: el, originalHTML: el.innerHTML, text, status: 'pending'
+            });
+          }
+          
+          debugLog(`[兜底方案] 从容器中提取到 ${paragraphs.length} 个段落`);
+        }
+        
+        // 如果容器方案也失败，尝试全局扫描
+        if (paragraphs.length < 3) {
+          debugLog('[兜底方案] 容器方案效果不佳，尝试全局扫描');
+          
+          // 对于微信公众号，尝试直接获取 #js_content 中的所有文本块
+          const wechatContent = document.querySelector('#js_content, .rich_media_content');
+          if (wechatContent) {
+            debugLog('[兜底方案] 检测到微信公众号，使用特殊处理');
+            
+            // 微信公众号的段落可能是 section 或直接的文本节点
+            const wechatSections = wechatContent.querySelectorAll('section, p, span[style*="font-size"]');
+            debugLog(`[兜底方案] 微信公众号找到 ${wechatSections.length} 个可能的段落元素`);
+            
+            for (const el of wechatSections) {
+              if (processedElements.has(el)) continue;
+              
+              // 跳过嵌套的容器
+              const hasNestedContent = el.querySelector('section, p');
+              if (hasNestedContent) continue;
+              
+              const text = el.innerText.trim();
+              debugLog(`[兜底方案] 微信段落: "${text.substring(0, 30)}..." (${text.length} 字符)`);
+              
+              if (text.length < 15) continue;
+              if (countWords(text) < 8) continue;
+              
+              const id = `cr-p-${idCounter++}`;
+              el.setAttribute('data-cr-id', id);
+              processedElements.add(el);
+              paragraphs.push({
+                id, element: el, originalHTML: el.innerHTML, text, status: 'pending'
+              });
+            }
+            
+            debugLog(`[兜底方案] 微信公众号提取到 ${paragraphs.length} 个段落`);
+          }
+          
+          // 获取所有可能的段落元素
+          const allElements = document.querySelectorAll(paragraphSelectors);
+          debugLog(`[兜底方案] 全局扫描找到 ${allElements.length} 个元素`);
+          const candidates = [];
+          
+          let skippedCount = { processed: 0, shouldProcess: 0, nested: 0, invalid: 0 };
+          
+          for (const el of allElements) {
+            if (processedElements.has(el)) { skippedCount.processed++; continue; }
+            if (!shouldProcessElement(el)) { skippedCount.shouldProcess++; continue; }
+            
+            // 跳过包含其他段落元素的容器
+            if (el.querySelector('p, section')) { skippedCount.nested++; continue; }
+            
+            const text = el.innerText.trim();
+            if (!isValidParagraph(text)) { skippedCount.invalid++; continue; }
+            
+            // 计算段落的可信度分数
+            let score = text.length;
+            
+            // 检查是否在常见的正文区域
+            const parent = el.parentElement;
+            if (parent) {
+              const parentClass = (typeof parent.className === 'string' ? parent.className : '').toLowerCase();
+              const parentId = (parent.id || '').toLowerCase();
+              
+              // 加分项：微信公众号
+              if (parentId.includes('js_content') || parentClass.includes('rich_media')) {
+                score *= 2;
+              }
+              // 加分项：常见正文区域
+              if (parentClass.includes('content') || parentClass.includes('article') || parentClass.includes('post')) {
+                score *= 1.5;
+              }
+              if (parent.tagName === 'ARTICLE' || parent.tagName === 'MAIN') {
+                score *= 1.5;
+              }
+              
+              // 减分项
+              if (parentClass.includes('comment') || parentClass.includes('footer') || parentClass.includes('sidebar')) {
+                score *= 0.3;
+              }
+            }
+            
+            candidates.push({ element: el, text, score });
+          }
+          
+          // 按分数排序，取前 N 个
+          candidates.sort((a, b) => b.score - a.score);
+          
+          for (const candidate of candidates) {
+            if (paragraphs.length >= 50) break; // 最多 50 个段落
+            if (processedElements.has(candidate.element)) continue;
+            
+            const id = `cr-p-${idCounter++}`;
+            candidate.element.setAttribute('data-cr-id', id);
+            processedElements.add(candidate.element);
+            paragraphs.push({
+              id, 
+              element: candidate.element, 
+              originalHTML: candidate.element.innerHTML, 
+              text: candidate.text, 
+              status: 'pending'
+            });
+          }
+          
+          debugLog(`[兜底方案] 全局扫描提取到 ${paragraphs.length} 个段落`);
+          debugLog(`[兜底方案] 跳过统计:`, skippedCount);
+        }
+      }
+
+      // 最终检查
       if (paragraphs.length === 0) {
-        throw new Error('Readability 提取的段落无法匹配到页面中的原始内容，无法生成题目');
+        throw new Error('无法识别正文内容，请确认当前页面包含可识别的文章内容');
       }
 
       debugLog(`[正文提取] 最终结果: 共找到 ${paragraphs.length} 个段落`);
@@ -894,6 +1277,11 @@ if (!window.ClozeReadingApp) {
         if (btnSubmit) btnSubmit.style.display = 'none';
         if (btnReset) btnReset.style.display = 'none';
         if (progressElement) progressElement.style.display = 'none';
+        
+        // 同步快捷按钮状态
+        if (this.syncQuickButtons) {
+          this.syncQuickButtons(false, false, true);
+        }
         
         let config;
         try {
@@ -988,6 +1376,11 @@ if (!window.ClozeReadingApp) {
 
       this.state.stats = { total: this.state.paragraphs.length, done: 0, success: 0 };
       shadow.getElementById('btn-generate').style.display = 'none';
+      
+      // 同步快捷按钮状态 - 生成中隐藏所有按钮
+      if (this.syncQuickButtons) {
+        this.syncQuickButtons(false, false, false);
+      }
       
       this.processQueue();
     },
@@ -1105,6 +1498,11 @@ if (!window.ClozeReadingApp) {
       if (btnSubmit) {
         btnSubmit.style.display = 'inline-block';
         btnSubmit.disabled = false;
+      }
+      
+      // 同步快捷按钮状态
+      if (this.syncQuickButtons) {
+        this.syncQuickButtons(true, true, false);
       }
     },
 
@@ -1364,7 +1762,20 @@ if (!window.ClozeReadingApp) {
 }
 
 // 统一执行启动逻辑
-if (window.ClozeReadingApp) {
+function startClozeReading() {
+  // 确保 DOM 已准备好
+  if (!document.body) {
+    debugLog('[启动] DOM 未准备好，等待...');
+    setTimeout(startClozeReading, 100);
+    return;
+  }
+  
+  // 确保 ClozeReadingApp 已定义
+  if (!window.ClozeReadingApp) {
+    debugLog('[启动] ClozeReadingApp 未定义');
+    return;
+  }
+  
   const existingPanel = document.getElementById('cr-floating-panel');
   if (!existingPanel) {
     // 面板不存在，初始化
@@ -1387,6 +1798,9 @@ if (window.ClozeReadingApp) {
       // 确保应用语言设置
       window.ClozeReadingApp.applyLanguage(shadow);
       
+      // 自动检测并展开（如果是新页面）
+      window.ClozeReadingApp.autoDetectAndShow(shadow);
+      
       // 检查是否有已生成的题目（通过检查页面中是否有 select.cr-select）
       const hasClozes = document.querySelectorAll('select.cr-select').length > 0;
       if (hasClozes) {
@@ -1400,6 +1814,12 @@ if (window.ClozeReadingApp) {
           btnSubmit.disabled = false;
         }
         if (btnReset) btnReset.style.display = 'inline-block';
+        
+        // 同步快捷按钮状态
+        if (window.ClozeReadingApp.syncQuickButtons) {
+          window.ClozeReadingApp.syncQuickButtons(true, true, false);
+        }
+        
         window.ClozeReadingApp.updateStatusKey('status.canContinue');
       } else {
         // 没有题目，显示生成按钮
@@ -1409,8 +1829,22 @@ if (window.ClozeReadingApp) {
         if (btnGenerate) btnGenerate.style.display = 'inline-block';
         if (btnSubmit) btnSubmit.style.display = 'none';
         if (btnReset) btnReset.style.display = 'none';
+        
+        // 同步快捷按钮状态
+        if (window.ClozeReadingApp.syncQuickButtons) {
+          window.ClozeReadingApp.syncQuickButtons(false, false, true);
+        }
+        
         window.ClozeReadingApp.updateStatusKey('status.statusReady');
       }
     }
   }
+}
+
+// 根据文档状态决定何时启动
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startClozeReading);
+} else {
+  // DOM 已经加载完成
+  startClozeReading();
 }
