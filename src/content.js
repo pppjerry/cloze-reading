@@ -351,6 +351,13 @@ if (!window.ClozeReadingApp) {
             panel.classList.add('expanded');
             toggle.style.display = 'none';
             debugLog('[自动检测] 检测到正文内容，自动展开侧边栏');
+            
+            // 2秒后自动收起，让用户知道侧边栏存在但不遮挡阅读
+            setTimeout(() => {
+              panel.classList.remove('expanded');
+              toggle.style.display = 'flex';
+              debugLog('[自动检测] 侧边栏已自动收起');
+            }, 2000);
           }
         }
       }, 800); // 延迟 800ms 检测，确保页面内容加载完成
