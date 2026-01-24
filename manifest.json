@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "cloze-reading-dev",
+  "name": "cloze-reading",
   "version": "1.0.0",
   "description": "基于LLM把网页正文变成「完型填空」，给阅读增加点摩擦，让你阅读更深刻",
   "permissions": ["activeTab", "scripting", "storage"],
