@@ -1540,14 +1540,8 @@ if (!window.ClozeReadingApp) {
         const safeAnalysis = (cloze.analysis || '').replace(/"/g, '&quot;');
         const safeAnswer = (cloze.answer || '').replace(/"/g, '&quot;');
         
-        const selectHtml = `
-          <span class="cr-cloze-wrapper">
-            <select class="cr-select" id="${selectId}" data-answer="${safeAnswer}" data-analysis="${safeAnalysis}">
-              <option value="" disabled selected>&nbsp;</option>
-              ${optionsHtml}
-            </select>
-          </span>
-        `;
+        // 注意：HTML 必须是单行，不能有换行符，否则在 white-space: pre-line 的页面会导致换行
+        const selectHtml = `<span class="cr-cloze-wrapper"><select class="cr-select" id="${selectId}" data-answer="${safeAnswer}" data-analysis="${safeAnalysis}"><option value="" disabled selected>&nbsp;</option>${optionsHtml}</select></span>`;
 
         const replaced = this.replaceTextInNode(el, cloze.target, selectHtml, replacedRanges);
         if (replaced) {
