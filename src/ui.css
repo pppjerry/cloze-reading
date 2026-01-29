@@ -3,9 +3,8 @@
   display: block;
   z-index: 2147483647;
   position: fixed;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
+  right: 16px;
+  bottom: 80px;
 }
 
 /* Reset for Shadow DOM */
@@ -19,82 +18,69 @@
    ========================================= */
 .cr-sidebar {
   display: flex;
-  align-items: flex-start;
-  gap: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
   font-size: 14px;
+  position: relative;
 }
 
 /* =========================================
    Sidebar Toggle Button (Collapsed State)
    ========================================= */
 .cr-sidebar-toggle {
-  width: 44px;
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-  border-radius: 12px 0 0 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-right: none;
-  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.15);
+  width: 40px;
+  height: 40px;
+  background: transparent;
+  border-radius: 50%;
+  border: none;
+  box-shadow: none;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  padding: 8px 0;
-  gap: 4px;
-  cursor: grab;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   user-select: none;
 }
 
 .cr-sidebar-toggle:active {
-  cursor: grabbing;
+  transform: scale(0.95);
 }
 
 .cr-sidebar-toggle:hover {
-  width: 48px;
-  background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+  transform: scale(1.08);
 }
 
 .cr-sidebar-toggle .cr-toggle-icon {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.1);
-  border-radius: 8px;
   transition: all 0.2s;
   position: relative;
 }
 
+.cr-sidebar-toggle .cr-toggle-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
 .cr-sidebar-toggle:hover .cr-toggle-icon {
   transform: scale(1.1);
-  background: rgba(56, 189, 248, 0.2);
 }
 
-.cr-sidebar-toggle .cr-toggle-text {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  font-size: 11px;
-  font-weight: 600;
-  color: #94a3b8;
-  letter-spacing: 2px;
-  padding: 8px 0;
-  transition: color 0.2s;
+/* Hidden elements in compact mode */
+.cr-sidebar-toggle .cr-toggle-text,
+.cr-sidebar-toggle .cr-quick-actions {
+  display: none;
 }
 
-.cr-sidebar-toggle:hover .cr-toggle-text {
-  color: #e2e8f0;
-}
-
-/* Quick Action Buttons on Toggle Bar */
+/* Quick Action Buttons - hidden by default, shown in expanded panel */
 .cr-quick-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  margin-top: 4px;
+  display: none;
 }
 
 .cr-quick-btn {
@@ -143,25 +129,34 @@
    ========================================= */
 .cr-panel {
   width: 0;
-  max-height: 80vh;
+  max-height: calc(100vh - 120px);
   background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
   color: #f1f5f9;
-  border-radius: 12px 0 0 12px;
-  box-shadow: -8px 0 30px rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-right: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   opacity: 0;
   pointer-events: none;
+  position: absolute;
+  bottom: 50px;
+  right: 0;
 }
 
 .cr-panel.expanded {
-  width: 320px;
+  width: 280px;
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Mobile responsive */
+@media (max-width: 480px) {
+  .cr-panel.expanded {
+    width: 260px;
+  }
 }
 
 .cr-header {
@@ -263,17 +258,7 @@
   border-color: rgba(56, 189, 248, 0.4);
 }
 
-/* Drag hint on toggle icon */
-.cr-sidebar-toggle .cr-toggle-icon::after {
-  content: '⋮⋮';
-  position: absolute;
-  bottom: -4px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 8px;
-  color: rgba(148, 163, 184, 0.5);
-  letter-spacing: -2px;
-}
+/* Drag hint removed for compact button */
 
 .cr-status {
   font-size: 13px;

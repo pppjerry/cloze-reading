@@ -352,12 +352,12 @@ if (!window.ClozeReadingApp) {
             toggle.style.display = 'none';
             debugLog('[自动检测] 检测到正文内容，自动展开侧边栏');
             
-            // 2秒后自动收起，让用户知道侧边栏存在但不遮挡阅读
+            // 1秒后自动收起，让用户知道侧边栏存在但不遮挡阅读
             setTimeout(() => {
               panel.classList.remove('expanded');
               toggle.style.display = 'flex';
               debugLog('[自动检测] 侧边栏已自动收起');
-            }, 2000);
+            }, 1000);
           }
         }
       }, 800); // 延迟 800ms 检测，确保页面内容加载完成
@@ -487,20 +487,11 @@ if (!window.ClozeReadingApp) {
       // 创建侧边栏容器
       const sidebar = document.createElement('div');
       sidebar.className = 'cr-sidebar';
+      // 获取 logo URL
+      const logoUrl = chrome.runtime.getURL('src/assets/icon/icon-192.png');
+      
       sidebar.innerHTML = `
-        <!-- 侧边栏收起状态的按钮条 -->
-        <div class="cr-sidebar-toggle" id="cr-toggle">
-          <div class="cr-toggle-icon">📝</div>
-          <div class="cr-toggle-text">Cloze</div>
-          <div class="cr-quick-actions">
-            <button class="cr-quick-btn" id="quick-generate" title="开始生成">▶</button>
-            <button class="cr-quick-btn" id="quick-submit" title="提交答案" style="display:none">✓</button>
-            <button class="cr-quick-btn" id="quick-reset" title="恢复原文" style="display:none">↺</button>
-            <button class="cr-quick-btn" id="quick-settings" title="设置">⚙</button>
-          </div>
-        </div>
-        
-        <!-- 展开的面板 -->
+        <!-- 展开的面板（放在前面，在 flex-column 中显示在上方） -->
         <div class="cr-panel" id="cr-panel-main">
           <div class="cr-header">
             <span class="cr-logo">📝 Cloze Reading</span>
@@ -510,7 +501,7 @@ if (!window.ClozeReadingApp) {
                 <option value="en">EN</option>
               </select>
               <button class="cr-close" id="btn-settings" title="设置" style="font-size:16px;">⚙️</button>
-              <button class="cr-close" id="btn-collapse" title="收起">◀</button>
+              <button class="cr-close" id="btn-collapse" title="收起">✕</button>
             </div>
           </div>
           <div class="cr-body">
@@ -565,6 +556,11 @@ if (!window.ClozeReadingApp) {
             </div>
           </div>
         </div>
+        
+        <!-- 浮动图标按钮（放在后面，在 flex-column 中显示在下方） -->
+        <div class="cr-sidebar-toggle" id="cr-toggle">
+          <div class="cr-toggle-icon"><img src="${logoUrl}" alt="Cloze"></div>
+        </div>
       `;
 
       shadow.appendChild(sidebar);
@@ -584,12 +580,6 @@ if (!window.ClozeReadingApp) {
       const btnReset = shadow.getElementById('btn-reset');
       const btnCollapse = shadow.getElementById('btn-collapse');
       const btnSettings = shadow.getElementById('btn-settings');
-      
-      // 快捷按钮
-      const quickGenerate = shadow.getElementById('quick-generate');
-      const quickSubmit = shadow.getElementById('quick-submit');
-      const quickReset = shadow.getElementById('quick-reset');
-      const quickSettings = shadow.getElementById('quick-settings');
 
       // 展开/收起面板
       const expandPanel = () => {
@@ -602,10 +592,8 @@ if (!window.ClozeReadingApp) {
         toggle.style.display = 'flex';
       };
 
-      // 点击切换栏展开面板
-      toggle.addEventListener('click', (e) => {
-        // 如果点击的是快捷按钮，不展开面板
-        if (e.target.closest('.cr-quick-btn')) return;
+      // 点击图标按钮展开面板
+      toggle.addEventListener('click', () => {
         expandPanel();
       });
 
@@ -616,29 +604,6 @@ if (!window.ClozeReadingApp) {
       btnGenerate.onclick = () => this.startGeneration();
       btnSubmit.onclick = () => this.handleSubmit();
       btnReset.onclick = () => this.restoreOriginal();
-      
-      // 快捷按钮事件
-      quickGenerate.onclick = (e) => {
-        e.stopPropagation();
-        this.startGeneration();
-      };
-      quickSubmit.onclick = (e) => {
-        e.stopPropagation();
-        this.handleSubmit();
-      };
-      quickReset.onclick = (e) => {
-        e.stopPropagation();
-        this.restoreOriginal();
-      };
-      quickSettings.onclick = (e) => {
-        e.stopPropagation();
-        expandPanel();
-        setTimeout(() => {
-          const settingsPanel = shadow.getElementById('cr-settings');
-          settingsPanel.style.display = 'block';
-          this.loadSettingsToPanel(shadow);
-        }, 100);
-      };
 
       btnSettings.onclick = () => {
         const settingsPanel = shadow.getElementById('cr-settings');
@@ -702,13 +667,6 @@ if (!window.ClozeReadingApp) {
       // 初始化状态文本
       this.updateStatusKey('status.statusReady');
       
-      // 同步快捷按钮状态的辅助函数
-      this.syncQuickButtons = (showSubmit, showReset, showGenerate) => {
-        quickGenerate.style.display = showGenerate ? 'flex' : 'none';
-        quickSubmit.style.display = showSubmit ? 'flex' : 'none';
-        quickReset.style.display = showReset ? 'flex' : 'none';
-      };
-      
       // ========== 拖拽功能 ==========
       this.setupDrag(div, sidebar, toggle);
     },
@@ -717,15 +675,20 @@ if (!window.ClozeReadingApp) {
     setupDrag(container, sidebar, toggle) {
       let isDragging = false;
       let startY = 0;
-      let startTop = 0;
+      let startBottom = 0;
       
-      // 从 storage 恢复位置
-      safeStorageGet(['sidebarPosition']).then(config => {
-        if (config.sidebarPosition) {
-          container.style.top = config.sidebarPosition;
-          container.style.transform = 'translateY(0)';
+      // 从 storage 恢复位置（使用 bottom）
+      safeStorageGet(['sidebarBottomPosition']).then(config => {
+        if (config.sidebarBottomPosition) {
+          container.style.bottom = config.sidebarBottomPosition;
         }
       }).catch(() => {});
+      
+      // 获取当前 bottom 值
+      const getCurrentBottom = () => {
+        const rect = container.getBoundingClientRect();
+        return window.innerHeight - rect.bottom;
+      };
       
       // 鼠标按下开始拖拽
       const onMouseDown = (e) => {
@@ -736,10 +699,7 @@ if (!window.ClozeReadingApp) {
         
         isDragging = true;
         startY = e.clientY;
-        
-        // 获取当前位置
-        const rect = container.getBoundingClientRect();
-        startTop = rect.top;
+        startBottom = getCurrentBottom();
         
         sidebar.classList.add('dragging');
         e.preventDefault();
@@ -750,18 +710,17 @@ if (!window.ClozeReadingApp) {
         if (!isDragging) return;
         
         const deltaY = e.clientY - startY;
-        let newTop = startTop + deltaY;
+        let newBottom = startBottom - deltaY; // 向下拖动时 deltaY 为正，bottom 减小
         
         // 限制在视口范围内
         const containerHeight = container.offsetHeight;
         const viewportHeight = window.innerHeight;
-        const minTop = 10;
-        const maxTop = viewportHeight - containerHeight - 10;
+        const minBottom = 10;
+        const maxBottom = viewportHeight - containerHeight - 10;
         
-        newTop = Math.max(minTop, Math.min(maxTop, newTop));
+        newBottom = Math.max(minBottom, Math.min(maxBottom, newBottom));
         
-        container.style.top = `${newTop}px`;
-        container.style.transform = 'translateY(0)';
+        container.style.bottom = `${newBottom}px`;
       };
       
       // 鼠标松开结束拖拽
@@ -772,7 +731,7 @@ if (!window.ClozeReadingApp) {
         sidebar.classList.remove('dragging');
         
         // 保存位置到 storage
-        safeStorageSet({ sidebarPosition: container.style.top }).catch(() => {});
+        safeStorageSet({ sidebarBottomPosition: container.style.bottom }).catch(() => {});
       };
       
       // 绑定事件到 toggle
@@ -786,8 +745,7 @@ if (!window.ClozeReadingApp) {
         const touch = e.touches[0];
         isDragging = true;
         startY = touch.clientY;
-        const rect = container.getBoundingClientRect();
-        startTop = rect.top;
+        startBottom = getCurrentBottom();
         sidebar.classList.add('dragging');
       }, { passive: true });
       
@@ -795,21 +753,20 @@ if (!window.ClozeReadingApp) {
         if (!isDragging) return;
         const touch = e.touches[0];
         const deltaY = touch.clientY - startY;
-        let newTop = startTop + deltaY;
+        let newBottom = startBottom - deltaY;
         
         const containerHeight = container.offsetHeight;
         const viewportHeight = window.innerHeight;
-        newTop = Math.max(10, Math.min(viewportHeight - containerHeight - 10, newTop));
+        newBottom = Math.max(10, Math.min(viewportHeight - containerHeight - 10, newBottom));
         
-        container.style.top = `${newTop}px`;
-        container.style.transform = 'translateY(0)';
+        container.style.bottom = `${newBottom}px`;
       }, { passive: true });
       
       document.addEventListener('touchend', () => {
         if (!isDragging) return;
         isDragging = false;
         sidebar.classList.remove('dragging');
-        safeStorageSet({ sidebarPosition: container.style.top }).catch(() => {});
+        safeStorageSet({ sidebarBottomPosition: container.style.bottom }).catch(() => {});
       });
     },
 
@@ -855,9 +812,6 @@ if (!window.ClozeReadingApp) {
       shadow.getElementById('btn-reset').style.display = 'inline-block';
       
       // 同步快捷按钮状态
-      if (this.syncQuickButtons) {
-        this.syncQuickButtons(false, true, false);
-      }
     },
 
     updateStatus(text, progress = null, meta = null) {
@@ -1286,9 +1240,6 @@ if (!window.ClozeReadingApp) {
         if (progressElement) progressElement.style.display = 'none';
         
         // 同步快捷按钮状态
-        if (this.syncQuickButtons) {
-          this.syncQuickButtons(false, false, true);
-        }
         
         let config;
         try {
@@ -1385,9 +1336,6 @@ if (!window.ClozeReadingApp) {
       shadow.getElementById('btn-generate').style.display = 'none';
       
       // 同步快捷按钮状态 - 生成中隐藏所有按钮
-      if (this.syncQuickButtons) {
-        this.syncQuickButtons(false, false, false);
-      }
       
       this.processQueue();
     },
@@ -1508,9 +1456,6 @@ if (!window.ClozeReadingApp) {
       }
       
       // 同步快捷按钮状态
-      if (this.syncQuickButtons) {
-        this.syncQuickButtons(true, true, false);
-      }
     },
 
     applyClozeToParagraph(paragraphObj, clozes) {
@@ -1817,9 +1762,6 @@ function startClozeReading() {
         if (btnReset) btnReset.style.display = 'inline-block';
         
         // 同步快捷按钮状态
-        if (window.ClozeReadingApp.syncQuickButtons) {
-          window.ClozeReadingApp.syncQuickButtons(true, true, false);
-        }
         
         window.ClozeReadingApp.updateStatusKey('status.canContinue');
       } else {
@@ -1832,9 +1774,6 @@ function startClozeReading() {
         if (btnReset) btnReset.style.display = 'none';
         
         // 同步快捷按钮状态
-        if (window.ClozeReadingApp.syncQuickButtons) {
-          window.ClozeReadingApp.syncQuickButtons(false, false, true);
-        }
         
         window.ClozeReadingApp.updateStatusKey('status.statusReady');
       }
