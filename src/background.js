@@ -94,6 +94,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     handleGenerateClozeBatch(request, sender.tab?.id, sendResponse);
     return true;
   }
+
+  if (request.type === 'GENERATE_CLOZE_ANALYSIS_BATCH') {
+    handleGenerateClozeAnalysisBatch(request, sender.tab?.id, sendResponse);
+    return true;
+  }
+
+  if (request.type === 'GENERATE_CLOZE_ANALYSIS') {
+    handleGenerateClozeAnalysis(request, sender.tab?.id, sendResponse);
+    return true;
+  }
 });
 
 // 3. 状态检查
@@ -147,6 +157,40 @@ function countWords(text) {
   return Math.ceil(chineseChars / 2) + englishWords;
 }
 
+function hasChinese(text) {
+  return /[\u4e00-\u9fff]/.test(text || '');
+}
+
+function hasLatin(text) {
+  return /[A-Za-z]/.test(text || '');
+}
+
+function getLanguageClass(text) {
+  const zh = hasChinese(text);
+  const en = hasLatin(text);
+  if (zh && en) return 'mixed';
+  if (zh) return 'zh';
+  if (en) return 'en';
+  return 'other';
+}
+
+function filterClozesByTargetLanguage(clozes) {
+  return (clozes || []).filter(cloze => {
+    const target = String(cloze.target || '');
+    const answer = String(cloze.answer || '');
+    const options = Array.isArray(cloze.options) ? cloze.options.map(String) : [];
+    const lang = getLanguageClass(target);
+    if (lang === 'zh') {
+      if (hasLatin(answer)) return false;
+      if (options.some(opt => hasLatin(opt))) return false;
+    } else if (lang === 'en') {
+      if (hasChinese(answer)) return false;
+      if (options.some(opt => hasChinese(opt))) return false;
+    }
+    return true;
+  });
+}
+
 // 4. 处理生成请求
 // 辅助函数：发送日志到 content script（只在开发版本）
 function logToConsole(tabId, level, ...args) {
@@ -165,8 +209,8 @@ async function handleGenerateClozeBatch({ paragraphs }, tabId, sendResponse) {
 
   logToConsole(tabId, 'log', `[批量生成] 开始处理 ${paragraphs.length} 个段落，Provider: ${provider}`);
 
-  const systemPrompt = buildSystemPrompt();
-  const userPrompt = buildBatchUserPrompt(paragraphs);
+  const systemPrompt = buildQuestionSystemPrompt();
+  const userPrompt = buildBatchQuestionUserPrompt(paragraphs);
 
   logToConsole(tabId, 'log', `[System Prompt]:`, systemPrompt);
   logToConsole(tabId, 'log', `[User Prompt]:`, userPrompt);
@@ -208,6 +252,9 @@ async function handleGenerateClozeBatch({ paragraphs }, tabId, sendResponse) {
         logToConsole(tabId, 'log', `[限制] 段落 ${item.id}，词数 <= 100，限制为 1 个挖空`);
       }
 
+      // 语言过滤：选项/答案必须与 target 语言一致
+      clozes = filterClozesByTargetLanguage(clozes);
+
       logToConsole(tabId, 'log', `[段落 ${item.id}] 挖空数: ${clozes.length}`);
 
       resultsById[item.id] = { clozes };
@@ -228,8 +275,8 @@ async function handleGenerateCloze({ paragraph }, tabId, sendResponse) {
   const provider = stored.apiProvider || stored.provider || 'ollama';
 
   const { id, text } = paragraph;
-  const systemPrompt = buildSystemPrompt();
-  const userPrompt = buildUserPrompt(text);
+  const systemPrompt = buildQuestionSystemPrompt();
+  const userPrompt = buildQuestionUserPrompt(text);
   const wordCount = countWords(text);
 
   logToConsole(tabId, 'log', `[生成] 段落 ${id}，词数: ${wordCount}，Provider: ${provider}`);
@@ -262,6 +309,9 @@ async function handleGenerateCloze({ paragraph }, tabId, sendResponse) {
       logToConsole(tabId, 'log', `[限制] 段落 ${id}，词数 <= 100，限制为 1 个挖空`);
     }
 
+    // 语言过滤：选项/答案必须与 target 语言一致
+    result.clozes = filterClozesByTargetLanguage(result.clozes);
+
     logToConsole(tabId, 'log', `[最终结果] 段落 ${id}，挖空数: ${result.clozes.length}`, result.clozes);
 
     sendResponse({ success: true, id, data: result });
@@ -270,6 +320,74 @@ async function handleGenerateCloze({ paragraph }, tabId, sendResponse) {
     debugError('Generation failed:', error);
     logToConsole(tabId, 'error', `[错误] 段落 ${id}:`, error.message);
     sendResponse({ success: false, id, error: error.message });
+  }
+}
+
+// 解析生成（批量）
+async function handleGenerateClozeAnalysisBatch({ items }, tabId, sendResponse) {
+  const stored = await chrome.storage.sync.get(['apiProvider', 'provider', 'ollamaBaseUrl', 'ollamaModel', 'dashscopeApiKey', 'dashscopeModel', 'googleApiKey', 'googleModel']);
+  const provider = stored.apiProvider || stored.provider || 'ollama';
+
+  logToConsole(tabId, 'log', `[批量解析] 开始处理 ${items.length} 个段落，Provider: ${provider}`);
+
+  const systemPrompt = buildAnalysisSystemPrompt();
+  const userPrompt = buildBatchAnalysisUserPrompt(items);
+  logToConsole(tabId, 'log', `[Analysis System Prompt]:`, systemPrompt);
+  logToConsole(tabId, 'log', `[Analysis User Prompt]:`, userPrompt);
+
+  try {
+    let rawContent = '';
+    if (provider === 'dashscope') {
+      rawContent = await callDashScope(stored, systemPrompt, userPrompt);
+    } else if (provider === 'google') {
+      rawContent = await callGoogle(stored, systemPrompt, userPrompt);
+    } else {
+      rawContent = await callOllama(stored, systemPrompt, userPrompt);
+    }
+
+    logToConsole(tabId, 'log', `[Analysis LLM 输出]:`, rawContent);
+    const analysisResult = parseBatchAnalysisResponse(rawContent);
+
+    const resultsById = {};
+    for (const item of analysisResult.items || []) {
+      resultsById[item.id] = { clozes: item.clozes || [] };
+    }
+
+    sendResponse({ success: true, data: resultsById });
+  } catch (error) {
+    debugError('Analysis batch failed:', error);
+    logToConsole(tabId, 'error', `[解析错误]:`, error.message);
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+// 解析生成（单段）
+async function handleGenerateClozeAnalysis({ item }, tabId, sendResponse) {
+  const stored = await chrome.storage.sync.get(['apiProvider', 'provider', 'ollamaBaseUrl', 'ollamaModel', 'dashscopeApiKey', 'dashscopeModel', 'googleApiKey', 'googleModel']);
+  const provider = stored.apiProvider || stored.provider || 'ollama';
+
+  const systemPrompt = buildAnalysisSystemPrompt();
+  const userPrompt = buildAnalysisUserPrompt(item);
+  logToConsole(tabId, 'log', `[Analysis System Prompt] 段落 ${item.id}:`, systemPrompt);
+  logToConsole(tabId, 'log', `[Analysis User Prompt] 段落 ${item.id}:`, userPrompt);
+
+  try {
+    let rawContent = '';
+    if (provider === 'dashscope') {
+      rawContent = await callDashScope(stored, systemPrompt, userPrompt);
+    } else if (provider === 'google') {
+      rawContent = await callGoogle(stored, systemPrompt, userPrompt);
+    } else {
+      rawContent = await callOllama(stored, systemPrompt, userPrompt);
+    }
+
+    logToConsole(tabId, 'log', `[Analysis LLM 输出] 段落 ${item.id}:`, rawContent);
+    const analysisResult = parseAnalysisResponse(rawContent);
+    sendResponse({ success: true, data: analysisResult });
+  } catch (error) {
+    debugError('Analysis failed:', error);
+    logToConsole(tabId, 'error', `[解析错误] 段落 ${item.id}:`, error.message);
+    sendResponse({ success: false, error: error.message });
   }
 }
 
@@ -374,72 +492,42 @@ async function callGoogle(settings, systemPrompt, userPrompt) {
 }
 
 // 5. Prompt 构建 - 分离系统提示词和用户输入
-function buildSystemPrompt() {
+function buildQuestionSystemPrompt() {
   const parts = [
-    '你是一个专业的阅读理解出题老师。请针对用户提供的多个段落制作"完形填空"。',
+    '# 角色',
+    '你是阅读理解出题专家，为文章制作高质量的完形填空题。',
     '',
-    '**输入格式说明**:',
-    '用户会提供一个 JSON 对象，包含多个段落，每个段落有唯一 id 和 text 字段。',
+    '# 出题原则',
+    '1. **可推断性**：挖空的词必须能通过上下文或背景知识推断出来',
+    '2. **有价值**：挖空核心概念、专业术语，帮助读者加深理解',
+    '3. **有难度**：干扰项要有迷惑性，不能一眼看出答案',
     '',
-    '**要求**:',
-    '1. **用户需要理解上下文才可以得出答案**：',
-    '2. **关注名词、命名实体、概念性词汇、专业术语**：',
-    '   - 优先选择：',
-    '     * 专有名词',
-    '     * 专业术语',
-    '     * 核心概念',
-    '   - 不要选择：动词、形容词、副词、连词、虚词，以及人名、地名、机构名。',
-    '3. **每个段落最多挖 2 个空（严格限制）**：',
-    '   - 如果少于20字或没有合适的目标词，返回空列表 []。',
-    '   - 每100字以内，只允许1个空，绝对不能挖2个空！',
-    '   - 挖空词必须是原文中存在的词（精确匹配，不要带标点）。',
-    '4. 为每个挖空点提供：',
-    '   - target: 原文中被挖掉的词（必须精确匹配原文，不要带标点）。',
-    '   - options: 4个选项（包含正确答案）。所有选项都必须是实际有意义的词。干扰项要有迷惑性（词性一致，语义相关但不正确）。',
-    '   - answer: 正确选项（必须是 options 中的一个）。',
-    '   - analysis: 简短解析（中文或英文，20字以内）。',
+    '# 字段说明',
+    '- target: 被挖空的词（必须精确匹配原文，不带标点）',
+    '- options: 4个选项，正确答案位置随机，干扰项词性一致、语义相关',
+    '- answer: 正确答案（必须在options中）',
     '',
-    '5. **语言规则**：',
-    '   - 如果输入文本是中文，则所有输出（target, options, answer, analysis）必须使用中文；',
-    '   - 如果输入文本是英文，则所有输出必须是英文，不要出现中文；',
-    '   - 不要中英混杂。',
+    '# 数量限制',
+    '- 每100字最多1空，每段最多2空',
+    '- 少于20字或无合适词则返回空列表[]',
     '',
-    'Language rule (English version for clarity):',
-    '- If the input text is in English, all outputs (target, options, answer, analysis) MUST be in English only.',
-    '- If the input text is in Chinese, all outputs MUST be in Chinese only.',
-    '- Do NOT mix languages.',
+    '# 语言规则（针对挖空词与选项）',
+    '- 选定 target 后，不得将其翻译成其他语言',
+    '- options/answer 必须与 target 语言一致（中→中，英→英）',
+    '- 允许中文段落出现少量英文术语（如 AI/FOMO）',
     '',
-    '**输出格式**:',
-    '必须且仅返回纯 JSON 格式，不要包含 Markdown 代码块标记。',
-    '**选项顺序要求：正确答案在 options 数组中的位置必须是随机的（可以是第1、2、3或4个位置），不要总是放在固定位置。**',
-    '格式如下：',
-    '{',
-    '  "items": [',
-    '    {',
-    '      "id": "段落id",',
-    '      "clozes": [',
-    '        {',
-    '          "target": "挖空词",',
-    '          "options": ["正确词", "干扰1", "干扰2", "干扰3"],',
-    '          "answer": "正确词",',
-    '          "analysis": "解析..."',
-    '        }',
-    '        // 注意：正确答案的位置要随机，可以是 options 数组的任意位置',
-    '      ]',
-    '    }',
-    '    // 每个段落对应一个 item，按输入顺序或 id 对应',
-    '  ]',
-    '}'
+    '# 输出格式',
+    '仅返回纯JSON：{"items":[{"id":"id","clozes":[{"target":"词","options":["选项1","选项2","选项3","选项4"],"answer":"选项1"}]}]}'
   ];
   return parts.join('\n');
 }
 
-function buildUserPrompt(text) {
+function buildQuestionUserPrompt(text) {
   return text;
 }
 
 // 批量用户提示词构建（一次性发送多个段落）
-function buildBatchUserPrompt(paragraphs) {
+function buildBatchQuestionUserPrompt(paragraphs) {
   const paragraphsJson = JSON.stringify({
     paragraphs: paragraphs.map(p => ({ id: p.id, text: p.text }))
   }, null, 2);
@@ -447,6 +535,75 @@ function buildBatchUserPrompt(paragraphs) {
   return `下方是若干段落，每个段落有唯一 id。请按系统说明，为每个段落生成 cloze 题目，并按 id 对应输出 JSON。
 
 ${paragraphsJson}`;
+}
+
+function buildAnalysisSystemPrompt() {
+  const parts = [
+    '# 角色',
+    '你是阅读理解解析助手，为完形填空题生成推理提示。',
+    '',
+    '# 解析原则',
+    '1. **不泄露答案**：解析中不能出现答案词本身',
+    '2. **可推断性**：基于挖空后的文本可见线索 + 常识背景推理',
+    '3. **有帮助**：说明“为什么能推断出答案”，而非复述原文',
+    '',
+    '# 输入说明',
+    '- masked_text: 挖空后的文本（答案已被替换为 ____ ）',
+    '- clozes: 题目（包含 target/options/answer）',
+    '',
+    '# 输出要求',
+    '- 为每个 cloze 生成 analysis（50字以内）',
+    '- analysis 不得包含 target 或 answer',
+    '- 禁止使用：\"文中提到\"、\"原文说\"等空话',
+    '',
+    '# 输出格式',
+    '仅返回纯JSON：{"items":[{"id":"id","clozes":[{"target":"词","analysis":"从可见线索推断"}]}]}'
+  ];
+  return parts.join('\n');
+}
+
+function buildAnalysisUserPrompt(item) {
+  const clozes = (item.clozes || []).map(c => ({
+    target: c.target,
+    options: c.options,
+    answer: c.answer
+  }));
+  const maskedText = maskTextWithClozes(item.text, item.clozes || []);
+  const payload = {
+    items: [
+      {
+        id: item.id,
+        masked_text: maskedText,
+        clozes
+      }
+    ]
+  };
+  return JSON.stringify(payload, null, 2);
+}
+
+function buildBatchAnalysisUserPrompt(items) {
+  const payloadItems = items.map(p => {
+    const clozes = (p.clozes || []).map(c => ({
+      target: c.target,
+      options: c.options,
+      answer: c.answer
+    }));
+    const maskedText = maskTextWithClozes(p.text, p.clozes || []);
+    return { id: p.id, masked_text: maskedText, clozes };
+  });
+  return JSON.stringify({ items: payloadItems }, null, 2);
+}
+
+function maskTextWithClozes(text, clozes) {
+  let masked = text;
+  for (const cloze of clozes || []) {
+    const target = String(cloze.target || '').trim();
+    if (!target) continue;
+    const idx = masked.indexOf(target);
+    if (idx === -1) continue;
+    masked = `${masked.slice(0, idx)}____${masked.slice(idx + target.length)}`;
+  }
+  return masked;
 }
 
 // 6. Fisher-Yates 洗牌算法，随机打乱数组
@@ -589,4 +746,70 @@ function parseBatchLLMResponse(content) {
   }
 
   return result || { items: [] };
+}
+
+function parseBatchAnalysisResponse(content) {
+  let jsonStr = content.trim();
+  let result = null;
+
+  try {
+    result = JSON.parse(jsonStr);
+  } catch (e) {
+    jsonStr = jsonStr.replace(/^```json\s*/, '').replace(/^```\s*/, '').replace(/\s*```$/, '');
+    try {
+      result = JSON.parse(jsonStr);
+    } catch (e2) {
+      const match = content.match(/\{\s*"items"\s*:\s*\[[\s\S]*?\]\s*\}/);
+      if (match) {
+        try {
+          result = JSON.parse(match[0]);
+        } catch (e3) {
+          return { items: [] };
+        }
+      } else {
+        return { items: [] };
+      }
+    }
+  }
+
+  if (!result || !Array.isArray(result.items)) return { items: [] };
+  result.items = result.items.map(item => {
+    const clozes = Array.isArray(item.clozes) ? item.clozes : [];
+    const normalized = clozes
+      .filter(c => c && c.target && c.analysis)
+      .map(c => ({ target: String(c.target).trim(), analysis: String(c.analysis).trim() }));
+    return { id: item.id, clozes: normalized };
+  });
+  return result;
+}
+
+function parseAnalysisResponse(content) {
+  let jsonStr = content.trim();
+  let result = null;
+
+  try {
+    result = JSON.parse(jsonStr);
+  } catch (e) {
+    jsonStr = jsonStr.replace(/^```json\s*/, '').replace(/^```\s*/, '').replace(/\s*```$/, '');
+    try {
+      result = JSON.parse(jsonStr);
+    } catch (e2) {
+      const match = content.match(/\{\s*"clozes"\s*:\s*\[[\s\S]*?\]\s*\}/);
+      if (match) {
+        try {
+          result = JSON.parse(match[0]);
+        } catch (e3) {
+          return { clozes: [] };
+        }
+      } else {
+        return { clozes: [] };
+      }
+    }
+  }
+
+  if (!result || !Array.isArray(result.clozes)) return { clozes: [] };
+  const clozes = result.clozes
+    .filter(c => c && c.target && c.analysis)
+    .map(c => ({ target: String(c.target).trim(), analysis: String(c.analysis).trim() }));
+  return { clozes };
 }

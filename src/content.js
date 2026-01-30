@@ -116,6 +116,10 @@ if (!window.ClozeReadingApp) {
       model: 'qwen2.5:7b',
       stats: { total: 0, done: 0, success: 0 },
       language: 'zh', // 'zh' | 'en'，界面语言
+        analysisEnabled: true,
+        analysisStatus: 'idle', // 'idle' | 'pending' | 'ready'
+        analysisNeedsReviewButton: false,
+        hasSubmitted: false,
       statusKey: null,
       statusParams: null,
       statusText: '',
@@ -129,6 +133,8 @@ if (!window.ClozeReadingApp) {
         btnGenerate: '开始生成',
         btnSubmit: '提交答案',
         btnReset: '恢复原文',
+        btnAnalysis: '查看解析',
+        labelAnalysis: '生成解析（完成填空后再补充解释）',
         settingsSave: '保存设置',
         labelApiProvider: 'API 提供者',
         labelLanguage: '界面语言 / UI Language',
@@ -139,6 +145,8 @@ if (!window.ClozeReadingApp) {
           statusReady: '准备就绪',
           score: '得分: {correct} / {total}',
           restored: '已恢复原文 (当前: {provider})',
+          analysisGenerating: '解析生成中...',
+          analysisReady: '解析已生成，可点击查看',
           checkingConnection: '检查连接: {provider}...',
           connectFailedUnknown: '连接失败: 无法获取服务状态，请检查扩展是否正常运行',
           connectFailedWithError: '连接失败: {error}',
@@ -160,6 +168,8 @@ if (!window.ClozeReadingApp) {
         btnGenerate: 'Start',
         btnSubmit: 'Submit',
         btnReset: 'Restore',
+        btnAnalysis: 'View Analysis',
+        labelAnalysis: 'Generate analysis (after submit)',
         settingsSave: 'Save Settings',
         labelApiProvider: 'API Provider',
         labelLanguage: 'UI Language',
@@ -170,6 +180,8 @@ if (!window.ClozeReadingApp) {
           statusReady: 'Ready',
           score: 'Score: {correct} / {total}',
           restored: 'Original restored (current: {provider})',
+          analysisGenerating: 'Generating analysis...',
+          analysisReady: 'Analysis ready. Click to view.',
           checkingConnection: 'Checking: {provider}...',
           connectFailedUnknown: 'Connection failed: cannot reach service, please check whether the extension is running.',
           connectFailedWithError: 'Connection failed: {error}',
@@ -244,6 +256,10 @@ if (!window.ClozeReadingApp) {
       if (btnSubmit) btnSubmit.textContent = dict.btnSubmit;
       if (btnReset) btnReset.textContent = dict.btnReset;
       if (btnSave) btnSave.textContent = dict.settingsSave;
+      const analysisLabel = shadow.getElementById('cr-analysis-label');
+      if (analysisLabel) analysisLabel.textContent = dict.labelAnalysis;
+      const btnAnalysis = shadow.getElementById('btn-analysis');
+      if (btnAnalysis) btnAnalysis.textContent = dict.btnAnalysis;
 
       // 更新快捷按钮的 title
       const quickGenerate = shadow.getElementById('quick-generate');
@@ -275,10 +291,11 @@ if (!window.ClozeReadingApp) {
       this.setupMessageListener();
       
       try {
-        const config = await safeStorageGet(['apiProvider', 'ollamaModel', 'googleModel', 'dashscopeModel', 'language']);
+        const config = await safeStorageGet(['apiProvider', 'ollamaModel', 'googleModel', 'dashscopeModel', 'language', 'analysisEnabled']);
         const apiProvider = config.apiProvider || 'ollama';
         this.state.model = getModelFromConfig(config, apiProvider);
         this.state.language = config.language || 'zh';
+        this.state.analysisEnabled = config.analysisEnabled !== false;
 
         const panel = document.getElementById('cr-floating-panel');
         if (panel && panel.shadowRoot) {
@@ -312,7 +329,7 @@ if (!window.ClozeReadingApp) {
       // 检查是否有文章容器
       for (const selector of articleSelectors) {
         const el = document.querySelector(selector);
-        if (el && el.textContent.trim().length > 500) {
+        if (el && el.textContent.trim().length > 300) {
           return true;
         }
       }
@@ -325,41 +342,50 @@ if (!window.ClozeReadingApp) {
       for (const p of paragraphs) {
         const text = p.textContent.trim();
         // 排除太短的段落和导航/页脚区域
-        if (text.length > 50 && !p.closest('nav, footer, header, aside, .sidebar, .nav, .menu')) {
+        if (text.length > 40 && !p.closest('nav, footer, header, aside, .sidebar, .nav, .menu')) {
           validParagraphs++;
           totalTextLength += text.length;
         }
       }
       
-      // 如果有至少 3 个有效段落且总文本长度超过 500 字符，认为有正文
-      return validParagraphs >= 3 && totalTextLength > 500;
+      // 如果有至少 2 个有效段落且总文本长度超过 300 字符，认为有正文
+      if (validParagraphs >= 2 && totalTextLength > 300) return true;
+
+      // 兜底：主内容区域文本足够长
+      const main = document.querySelector('main, article, [role="main"], .content, .article, .post');
+      if (main && main.textContent.trim().length > 800) return true;
+
+      return false;
     },
     
     // 自动检测并展开侧边栏
     async autoDetectAndShow(shadow) {
       // 延迟检测，等待页面内容加载完成
-      setTimeout(() => {
+      const tryDetect = (label) => {
         const hasContent = this.quickDetectContent();
-        debugLog('[自动检测] 页面正文检测结果:', hasContent);
+        debugLog(`[自动检测] 页面正文检测结果(${label}):`, hasContent);
         
-        if (hasContent) {
-          // 检测到正文，展开面板
-          const panel = shadow.getElementById('cr-panel-main');
-          const toggle = shadow.getElementById('cr-toggle');
+        if (!hasContent) return false;
+        const panel = shadow.getElementById('cr-panel-main');
+        const toggle = shadow.getElementById('cr-toggle');
+        
+        if (panel && toggle) {
+          panel.classList.add('expanded');
+          toggle.style.display = 'none';
+          debugLog('[自动检测] 检测到正文内容，自动展开侧边栏');
           
-          if (panel && toggle) {
-            panel.classList.add('expanded');
-            toggle.style.display = 'none';
-            debugLog('[自动检测] 检测到正文内容，自动展开侧边栏');
-            
-            // 1秒后自动收起，让用户知道侧边栏存在但不遮挡阅读
-            setTimeout(() => {
-              panel.classList.remove('expanded');
-              toggle.style.display = 'flex';
-              debugLog('[自动检测] 侧边栏已自动收起');
-            }, 1000);
-          }
+          // 1秒后自动收起，让用户知道侧边栏存在但不遮挡阅读
+          setTimeout(() => {
+            panel.classList.remove('expanded');
+            toggle.style.display = 'flex';
+            debugLog('[自动检测] 侧边栏已自动收起');
+          }, 1000);
         }
+        return true;
+      };
+
+      setTimeout(() => {
+        tryDetect('首次');
       }, 800); // 延迟 800ms 检测，确保页面内容加载完成
     },
 
@@ -514,6 +540,7 @@ if (!window.ClozeReadingApp) {
               <button id="btn-generate" class="cr-btn primary">开始生成</button>
               <button id="btn-submit" class="cr-btn success" style="display:none" disabled>提交答案</button>
               <button id="btn-reset" class="cr-btn warning" style="display:none">恢复原文</button>
+              <button id="btn-analysis" class="cr-btn primary" style="display:none">查看解析</button>
             </div>
             <div id="cr-settings" class="cr-settings" style="display:none; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
               <div style="margin-bottom: 10px;">
@@ -552,6 +579,14 @@ if (!window.ClozeReadingApp) {
                 <div style="font-size: 11px; color: #64748b; margin-top: 4px;">格式: qwen-类型 (如: qwen-turbo, qwen-plus, qwen-max, qwen-long)</div>
               </div>
 
+              <!-- 解析开关 -->
+              <div style="margin-top: 8px;">
+                <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #cbd5e1;">
+                  <input id="cr-enable-analysis" type="checkbox" checked />
+                  <span id="cr-analysis-label">生成解析（完成填空后再补充解释）</span>
+                </label>
+              </div>
+
               <button id="btn-save-settings" class="cr-btn primary" style="width: 100%; margin-top: 8px;">保存设置</button>
             </div>
           </div>
@@ -578,6 +613,7 @@ if (!window.ClozeReadingApp) {
       const btnGenerate = shadow.getElementById('btn-generate');
       const btnSubmit = shadow.getElementById('btn-submit');
       const btnReset = shadow.getElementById('btn-reset');
+      const btnAnalysis = shadow.getElementById('btn-analysis');
       const btnCollapse = shadow.getElementById('btn-collapse');
       const btnSettings = shadow.getElementById('btn-settings');
 
@@ -604,6 +640,7 @@ if (!window.ClozeReadingApp) {
       btnGenerate.onclick = () => this.startGeneration();
       btnSubmit.onclick = () => this.handleSubmit();
       btnReset.onclick = () => this.restoreOriginal();
+      if (btnAnalysis) btnAnalysis.onclick = () => this.showAnalysisFeedback();
 
       btnSettings.onclick = () => {
         const settingsPanel = shadow.getElementById('cr-settings');
@@ -654,6 +691,21 @@ if (!window.ClozeReadingApp) {
       shadow.getElementById('btn-save-settings').addEventListener('click', () => {
         this.saveSettingsFromPanel(shadow);
       });
+
+      // 解析开关：即时保存
+      const analysisCheckbox = shadow.getElementById('cr-enable-analysis');
+      if (analysisCheckbox) {
+        analysisCheckbox.addEventListener('change', () => {
+          this.state.analysisEnabled = analysisCheckbox.checked;
+          safeStorageSet({ analysisEnabled: this.state.analysisEnabled }).catch(() => {});
+          if (!this.state.analysisEnabled) {
+            this.state.analysisStatus = 'idle';
+            this.state.analysisNeedsReviewButton = false;
+            const btnAnalysis = shadow.getElementById('btn-analysis');
+            if (btnAnalysis) btnAnalysis.style.display = 'none';
+          }
+        });
+      }
 
       // 设置语言选择器的默认值
       const langSelect = shadow.getElementById('cr-language');
@@ -780,6 +832,7 @@ if (!window.ClozeReadingApp) {
 
       let correctCount = 0;
       let totalCount = 0;
+      this.state.hasSubmitted = true;
       
       document.querySelectorAll('select.cr-select').forEach(select => {
         totalCount++;
@@ -796,12 +849,13 @@ if (!window.ClozeReadingApp) {
         } else {
           select.classList.add('wrong');
           parent.classList.add('wrong');
-          
-          if (!parent.querySelector('.cr-feedback')) {
-            const feedback = document.createElement('span');
-            feedback.className = 'cr-feedback';
-            feedback.innerHTML = ` ✅ ${correctAnswer} <br> 💡 ${analysis}`;
-            parent.appendChild(feedback);
+          if (this.state.analysisEnabled && this.state.analysisStatus === 'ready') {
+            if (!parent.querySelector('.cr-feedback')) {
+              const feedback = document.createElement('span');
+              feedback.className = 'cr-feedback';
+              feedback.innerHTML = ` ✅ ${correctAnswer} <br> 💡 ${analysis}`;
+              parent.appendChild(feedback);
+            }
           }
         }
         select.disabled = true; 
@@ -810,8 +864,22 @@ if (!window.ClozeReadingApp) {
       this.updateStatusKey('status.score', { correct: correctCount, total: totalCount });
       shadow.getElementById('btn-submit').style.display = 'none';
       shadow.getElementById('btn-reset').style.display = 'inline-block';
+      const btnAnalysis = shadow.getElementById('btn-analysis');
+      if (btnAnalysis) btnAnalysis.style.display = 'none';
       
-      // 同步快捷按钮状态
+      if (this.state.analysisEnabled) {
+        if (this.state.analysisStatus === 'ready') {
+          this.updateStatusKey('status.analysisReady');
+        } else {
+          this.state.analysisNeedsReviewButton = true;
+          this.updateStatusKey('status.analysisGenerating');
+          if (this.state.analysisStatus === 'idle') {
+            this.fetchAnalysesForAll();
+          }
+        }
+      } else {
+        this.state.analysisNeedsReviewButton = false;
+      }
     },
 
     updateStatus(text, progress = null, meta = null) {
@@ -1233,10 +1301,12 @@ if (!window.ClozeReadingApp) {
         const btnGenerate = shadow.getElementById('btn-generate');
         const btnSubmit = shadow.getElementById('btn-submit');
         const btnReset = shadow.getElementById('btn-reset');
+      const btnAnalysis = shadow.getElementById('btn-analysis');
         const progressElement = shadow.querySelector('.cr-progress');
         if (btnGenerate) btnGenerate.style.display = 'inline-block';
         if (btnSubmit) btnSubmit.style.display = 'none';
         if (btnReset) btnReset.style.display = 'none';
+      if (btnAnalysis) btnAnalysis.style.display = 'none';
         if (progressElement) progressElement.style.display = 'none';
         
         // 同步快捷按钮状态
@@ -1252,6 +1322,9 @@ if (!window.ClozeReadingApp) {
         this.updateStatusKey('status.restored', { provider: getProviderName(apiProvider) });
       }
       this.state.paragraphs = [];
+      this.state.analysisStatus = 'idle';
+      this.state.analysisNeedsReviewButton = false;
+      this.state.hasSubmitted = false;
     },
 
     async startGeneration() {
@@ -1275,7 +1348,7 @@ if (!window.ClozeReadingApp) {
       
       let config;
       try {
-        config = await safeStorageGet(['apiProvider', 'ollamaModel', 'googleModel', 'dashscopeModel']);
+        config = await safeStorageGet(['apiProvider', 'ollamaModel', 'googleModel', 'dashscopeModel', 'analysisEnabled']);
       } catch (e) {
         if (e.message) {
           this.updateStatus(e.message);
@@ -1285,6 +1358,7 @@ if (!window.ClozeReadingApp) {
         return;
       }
       const apiProvider = config.apiProvider || 'ollama';
+      this.state.analysisEnabled = config.analysisEnabled !== false;
       
       this.state.model = getModelFromConfig(config, apiProvider);
       this.updateStatusKey('status.checkingConnection', { provider: getProviderName(apiProvider) });
@@ -1349,7 +1423,7 @@ if (!window.ClozeReadingApp) {
       const shadow = panel.shadowRoot;
       let config;
       try {
-        config = await safeStorageGet(['apiProvider']);
+        config = await safeStorageGet(['apiProvider', 'analysisEnabled']);
       } catch (e) {
         if (e.message) {
           this.updateStatus(e.message);
@@ -1361,7 +1435,11 @@ if (!window.ClozeReadingApp) {
       const apiProvider = config.apiProvider || 'ollama';
       const providerName = getProviderName(apiProvider);
       const batchSize = 10; // 每批处理的段落数量
+      const maxConcurrentBatches = 2; // 并发批次数
+      this.state.analysisEnabled = config.analysisEnabled !== false;
+      const analysisEnabled = this.state.analysisEnabled;
       const totalParagraphs = this.state.paragraphs.length;
+      let completedCount = 0;
       
       // 将段落分批处理
       const batches = [];
@@ -1369,61 +1447,64 @@ if (!window.ClozeReadingApp) {
         batches.push(this.state.paragraphs.slice(i, i + batchSize));
       }
 
-      try {
-        // 逐批处理
-        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-          const batch = batches[batchIndex];
-          const batchStartIndex = batchIndex * batchSize;
-          
-          // 更新状态：显示当前批次进度
-          this.updateStatusKey('status.generating', {
-            provider: providerName,
-            current: batchStartIndex + 1,
-            total: totalParagraphs
-          }, {
-            current: batchStartIndex,
-            total: totalParagraphs
-          });
+      const runBatch = async (batch, batchIndex) => {
+        const batchStartIndex = batchIndex * batchSize;
+        this.updateStatusKey('status.generating', {
+          provider: providerName,
+          current: Math.min(batchStartIndex + 1, totalParagraphs),
+          total: totalParagraphs
+        }, {
+          current: Math.min(batchStartIndex, totalParagraphs),
+          total: totalParagraphs
+        });
 
-          // 调用批量 API 处理当前批次
-          const response = await safeSendMessage({
-            type: 'GENERATE_CLOZE_BATCH',
-            paragraphs: batch.map(p => ({ id: p.id, text: p.text })),
-            model: this.state.model
-          });
+        const response = await safeSendMessage({
+          type: 'GENERATE_CLOZE_BATCH',
+          paragraphs: batch.map(p => ({ id: p.id, text: p.text })),
+          model: this.state.model
+        });
 
-          if (response.success && response.data) {
-            // 处理当前批次的结果
-            for (let i = 0; i < batch.length; i++) {
-              const p = batch[i];
-              const paragraphResult = response.data[p.id];
-              const globalIndex = batchStartIndex + i;
-
-              // 更新进度
-              this.updateStatusKey('status.generating', {
-                provider: providerName,
-                current: globalIndex + 1,
-                total: totalParagraphs
-              }, {
-                current: globalIndex,
-                total: totalParagraphs
-              });
-
-              if (paragraphResult && paragraphResult.clozes && paragraphResult.clozes.length > 0) {
-                this.applyClozeToParagraph(p, paragraphResult.clozes);
-                this.state.stats.success++;
-              }
-
-              this.state.stats.done++;
-              p.status = 'done';
+        if (response.success && response.data) {
+          for (const p of batch) {
+            const paragraphResult = response.data[p.id];
+            if (paragraphResult && paragraphResult.clozes && paragraphResult.clozes.length > 0) {
+              p.clozes = paragraphResult.clozes;
+              this.applyClozeToParagraph(p, paragraphResult.clozes);
+              this.state.stats.success++;
             }
-          } else {
-            // 当前批次失败，标记该批次所有段落为失败
-            for (const p of batch) {
-              this.state.stats.done++;
-              p.status = 'done';
-            }
+            this.state.stats.done++;
+            completedCount++;
+            p.status = 'done';
+            this.updateStatusKey('status.generating', {
+              provider: providerName,
+              current: completedCount,
+              total: totalParagraphs
+            }, {
+              current: completedCount,
+              total: totalParagraphs
+            });
           }
+        } else {
+          for (const p of batch) {
+            this.state.stats.done++;
+            completedCount++;
+            p.status = 'done';
+            this.updateStatusKey('status.generating', {
+              provider: providerName,
+              current: completedCount,
+              total: totalParagraphs
+            }, {
+              current: completedCount,
+              total: totalParagraphs
+            });
+          }
+        }
+      };
+
+      try {
+        for (let i = 0; i < batches.length; i += maxConcurrentBatches) {
+          const slice = batches.slice(i, i + maxConcurrentBatches);
+          await Promise.all(slice.map((batch, offset) => runBatch(batch, i + offset)));
         }
       } catch (err) {
         debugError('批量调用失败:', err);
@@ -1455,7 +1536,81 @@ if (!window.ClozeReadingApp) {
         btnSubmit.disabled = false;
       }
       
-      // 同步快捷按钮状态
+      if (analysisEnabled) {
+        this.fetchAnalysesForAll();
+      }
+    },
+
+    async fetchAnalysesForAll() {
+      if (!this.state.analysisEnabled || this.state.analysisStatus === 'pending' || this.state.analysisStatus === 'ready') return;
+      this.state.analysisStatus = 'pending';
+      const items = this.state.paragraphs
+        .filter(p => Array.isArray(p.clozes) && p.clozes.length > 0)
+        .map(p => ({ id: p.id, text: p.text, clozes: p.clozes }));
+      
+      if (items.length === 0) return;
+      
+      try {
+        const response = await safeSendMessage({
+          type: 'GENERATE_CLOZE_ANALYSIS_BATCH',
+          items
+        });
+        
+        if (response && response.success && response.data) {
+          this.applyAnalyses(response.data);
+        }
+      } catch (e) {
+        debugWarn('[解析生成失败]', e.message || e);
+      }
+    },
+
+    applyAnalyses(resultsById) {
+      if (!this.state.analysisEnabled) return;
+      this.state.analysisStatus = 'ready';
+      for (const p of this.state.paragraphs) {
+        const result = resultsById[p.id];
+        if (!result || !Array.isArray(result.clozes)) continue;
+        for (const cloze of result.clozes) {
+          const target = String(cloze.target || '').trim();
+          const analysis = String(cloze.analysis || '').trim();
+          if (!target || !analysis) continue;
+          document.querySelectorAll(`select.cr-select[data-target="${CSS.escape(target)}"]`).forEach(select => {
+            select.dataset.analysis = analysis;
+          });
+        }
+      }
+      const panel = document.getElementById('cr-floating-panel');
+      if (panel && panel.shadowRoot) {
+        const shadow = panel.shadowRoot;
+        const btnAnalysis = shadow.getElementById('btn-analysis');
+        if (this.state.hasSubmitted && this.state.analysisNeedsReviewButton && btnAnalysis) {
+          btnAnalysis.style.display = 'inline-block';
+          btnAnalysis.disabled = false;
+          this.updateStatusKey('status.analysisReady');
+        }
+      }
+    },
+
+    showAnalysisFeedback() {
+      if (!this.state.analysisEnabled || this.state.analysisStatus !== 'ready') return;
+      const panel = document.getElementById('cr-floating-panel');
+      if (!panel || !panel.shadowRoot) return;
+      const shadow = panel.shadowRoot;
+      document.querySelectorAll('select.cr-select').forEach(select => {
+        const parent = select.parentElement;
+        if (!parent || select.value === select.dataset.answer) return;
+        const analysis = select.dataset.analysis || '';
+        if (!analysis) return;
+        if (!parent.querySelector('.cr-feedback')) {
+          const feedback = document.createElement('span');
+          feedback.className = 'cr-feedback';
+          feedback.innerHTML = ` ✅ ${select.dataset.answer} <br> 💡 ${analysis}`;
+          parent.appendChild(feedback);
+        }
+      });
+      const btnAnalysis = shadow.getElementById('btn-analysis');
+      if (btnAnalysis) btnAnalysis.style.display = 'none';
+      this.state.analysisNeedsReviewButton = false;
     },
 
     applyClozeToParagraph(paragraphObj, clozes) {
@@ -1484,9 +1639,10 @@ if (!window.ClozeReadingApp) {
         const selectId = `${paragraphObj.id}-sel-${index}`;
         const safeAnalysis = (cloze.analysis || '').replace(/"/g, '&quot;');
         const safeAnswer = (cloze.answer || '').replace(/"/g, '&quot;');
+        const safeTarget = (cloze.target || '').replace(/"/g, '&quot;');
         
         // 注意：HTML 必须是单行，不能有换行符，否则在 white-space: pre-line 的页面会导致换行
-        const selectHtml = `<span class="cr-cloze-wrapper"><select class="cr-select" id="${selectId}" data-answer="${safeAnswer}" data-analysis="${safeAnalysis}"><option value="" disabled selected>&nbsp;</option>${optionsHtml}</select></span>`;
+        const selectHtml = `<span class="cr-cloze-wrapper"><select class="cr-select" id="${selectId}" data-answer="${safeAnswer}" data-analysis="${safeAnalysis}" data-target="${safeTarget}"><option value="" disabled selected>&nbsp;</option>${optionsHtml}</select></span>`;
 
         const replaced = this.replaceTextInNode(el, cloze.target, selectHtml, replacedRanges);
         if (replaced) {
@@ -1593,7 +1749,7 @@ if (!window.ClozeReadingApp) {
     async loadSettingsToPanel(shadow) {
       let settings;
       try {
-        settings = await safeStorageGet(['apiProvider', 'ollamaBaseUrl', 'ollamaModel', 'googleApiKey', 'googleModel', 'dashscopeApiKey', 'dashscopeModel', 'language']);
+        settings = await safeStorageGet(['apiProvider', 'ollamaBaseUrl', 'ollamaModel', 'googleApiKey', 'googleModel', 'dashscopeApiKey', 'dashscopeModel', 'language', 'analysisEnabled']);
       } catch (e) {
         if (e.message) {
           this.updateStatus(e.message);
@@ -1634,6 +1790,10 @@ if (!window.ClozeReadingApp) {
       shadow.getElementById('cr-google-model').value = settings.googleModel || 'gemini-2.5-flash';
       shadow.getElementById('cr-dashscope-key').value = settings.dashscopeApiKey || '';
       shadow.getElementById('cr-dashscope-model').value = settings.dashscopeModel || 'qwen-plus';
+      const analysisCheckbox = shadow.getElementById('cr-enable-analysis');
+      if (analysisCheckbox) {
+        analysisCheckbox.checked = settings.analysisEnabled !== false;
+      }
 
       // 应用语言
       this.applyLanguage(shadow);
@@ -1644,6 +1804,9 @@ if (!window.ClozeReadingApp) {
       const language = shadow.getElementById('cr-language').value || 'zh';
       const settings = { apiProvider, language };
       this.state.language = language;
+      const analysisCheckbox = shadow.getElementById('cr-enable-analysis');
+      settings.analysisEnabled = analysisCheckbox ? analysisCheckbox.checked : true;
+      this.state.analysisEnabled = settings.analysisEnabled;
       
       // 根据 provider 读取对应配置
       const configMap = {
@@ -1695,6 +1858,12 @@ if (!window.ClozeReadingApp) {
       
       try {
         await safeStorageSet(settings);
+        if (!this.state.analysisEnabled) {
+          this.state.analysisStatus = 'idle';
+          this.state.analysisNeedsReviewButton = false;
+          const btnAnalysis = shadow.getElementById('btn-analysis');
+          if (btnAnalysis) btnAnalysis.style.display = 'none';
+        }
         this.state.model = getModelFromConfig(settings, apiProvider);
         this.updateStatusKey('status.settingsSaved');
         setTimeout(() => {
