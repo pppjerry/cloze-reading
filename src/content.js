@@ -437,62 +437,14 @@ if (!window.ClozeReadingApp) {
       document.head.appendChild(link);
     },
 
+    // Readability.js 通过 manifest.json content_scripts 自动注入
     async loadReadability() {
-      // Readability.js 现在通过 manifest.json content_scripts 直接注入
-      // 检查是否已经可用
-      if (typeof window.Readability === 'function') {
-        debugLog('✓ Readability 已通过 content_scripts 加载');
-        return;
-      }
-      
-      // 尝试从全局作用域获取（content_scripts 共享同一个环境）
+      if (typeof window.Readability === 'function') return;
       try {
         if (typeof Readability === 'function') {
-          debugLog('发现全局 Readability，绑定到 window');
           window.Readability = Readability;
-          return;
         }
-      } catch (e) {
-        // 忽略
-      }
-      
-      // 如果仍然不可用，等待一小段时间（可能还在加载中）
-      return new Promise((resolve, reject) => {
-        let attempts = 0;
-        const maxAttempts = 20; // 1秒
-        
-        const checkReadability = () => {
-          attempts++;
-          
-          if (typeof window.Readability === 'function') {
-            debugLog('✓ Readability 加载成功');
-            resolve();
-            return;
-          }
-          
-          // 尝试从全局获取
-          try {
-            if (typeof Readability === 'function') {
-              window.Readability = Readability;
-              debugLog('✓ Readability 从全局绑定成功');
-              resolve();
-              return;
-            }
-          } catch (e) {
-            // 忽略
-          }
-          
-          if (attempts >= maxAttempts) {
-            debugWarn('[Readability] 加载超时，将使用兜底方案');
-            reject(new Error('Readability 未能加载，将使用兜底方案'));
-            return;
-          }
-          
-          setTimeout(checkReadability, 50);
-        };
-        
-        checkReadability();
-      });
+      } catch (e) { /* 忽略 */ }
     },
 
 
@@ -1306,10 +1258,8 @@ if (!window.ClozeReadingApp) {
         if (btnGenerate) btnGenerate.style.display = 'inline-block';
         if (btnSubmit) btnSubmit.style.display = 'none';
         if (btnReset) btnReset.style.display = 'none';
-      if (btnAnalysis) btnAnalysis.style.display = 'none';
+        if (btnAnalysis) btnAnalysis.style.display = 'none';
         if (progressElement) progressElement.style.display = 'none';
-        
-        // 同步快捷按钮状态
         
         let config;
         try {
@@ -1408,9 +1358,6 @@ if (!window.ClozeReadingApp) {
 
       this.state.stats = { total: this.state.paragraphs.length, done: 0, success: 0 };
       shadow.getElementById('btn-generate').style.display = 'none';
-      
-      // 同步快捷按钮状态 - 生成中隐藏所有按钮
-      
       this.processQueue();
     },
 
@@ -1929,9 +1876,6 @@ function startClozeReading() {
           btnSubmit.disabled = false;
         }
         if (btnReset) btnReset.style.display = 'inline-block';
-        
-        // 同步快捷按钮状态
-        
         window.ClozeReadingApp.updateStatusKey('status.canContinue');
       } else {
         // 没有题目，显示生成按钮
@@ -1941,9 +1885,6 @@ function startClozeReading() {
         if (btnGenerate) btnGenerate.style.display = 'inline-block';
         if (btnSubmit) btnSubmit.style.display = 'none';
         if (btnReset) btnReset.style.display = 'none';
-        
-        // 同步快捷按钮状态
-        
         window.ClozeReadingApp.updateStatusKey('status.statusReady');
       }
     }

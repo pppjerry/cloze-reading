@@ -72,58 +72,6 @@
   transform: scale(1.1);
 }
 
-/* Hidden elements in compact mode */
-.cr-sidebar-toggle .cr-toggle-text,
-.cr-sidebar-toggle .cr-quick-actions {
-  display: none;
-}
-
-/* Quick Action Buttons - hidden by default, shown in expanded panel */
-.cr-quick-actions {
-  display: none;
-}
-
-.cr-quick-btn {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 14px;
-  transition: all 0.2s;
-  color: #94a3b8;
-}
-
-.cr-quick-btn:hover {
-  background: rgba(56, 189, 248, 0.15);
-  border-color: rgba(56, 189, 248, 0.3);
-  color: #38bdf8;
-  transform: scale(1.05);
-}
-
-.cr-quick-btn.active {
-  background: rgba(56, 189, 248, 0.2);
-  border-color: #38bdf8;
-  color: #38bdf8;
-}
-
-.cr-quick-btn[title]:hover::after {
-  content: attr(title);
-  position: absolute;
-  right: 50px;
-  background: #1e293b;
-  color: #f1f5f9;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  white-space: nowrap;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
 /* =========================================
    Expanded Panel Styles
    ========================================= */
@@ -231,34 +179,14 @@
   }
 }
 
-/* Drag Handle for Sidebar */
-.cr-drag-handle {
-  width: 100%;
-  height: 6px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-  margin: 4px 0 8px;
-  cursor: ns-resize;
-  transition: background 0.2s;
-}
-
-.cr-drag-handle:hover {
-  background: rgba(56, 189, 248, 0.3);
-}
-
-/* Sidebar Position Indicator */
+/* Sidebar Dragging State */
 .cr-sidebar.dragging {
   user-select: none;
 }
 
 .cr-sidebar.dragging .cr-sidebar-toggle {
-  background: linear-gradient(135deg, #1e3a5f 0%, #2d4a6f 100%);
   cursor: grabbing;
-  box-shadow: -6px 0 30px rgba(56, 189, 248, 0.3);
-  border-color: rgba(56, 189, 248, 0.4);
 }
-
-/* Drag hint removed for compact button */
 
 .cr-status {
   font-size: 13px;
